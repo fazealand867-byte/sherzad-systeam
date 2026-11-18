@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #f6f7f9;
+    --bg-card: #ffffff;
+    --text-primary: #0f1117;
+    --border-color: #e2e8f0;
+  }
+
+  .dark {
+    --bg-primary: #0f1117;
+    --bg-card: #181b23;
+    --text-primary: #f8fafc;
+    --border-color: #262b38;
+  }
+
+  body {
+    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Custom sleek scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.28);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(16, 185, 129, 0.55);
+}
+
+/* Print Stylesheet for Invoices, Thermal Receipts, Statements, and Reports */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-document-area,
+  #printable-document-area * {
+    visibility: visible;
+  }
+  #printable-document-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

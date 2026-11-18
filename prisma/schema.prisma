@@ -1,0 +1,639 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model CompanySettings {
+  id                          String    @id @default(cuid())
+  companyNameEn               String    @default("Sherzad Enterprise Group")
+  companyNameAr               String    @default("مجموعة شيرزاد للتجارة العامة والمحاسبة")
+  companyNameKu               String    @default("گرووپی شێرزاد بۆ بازرگانی گشتی و ژمێریاری")
+  logoUrl                     String?
+  phone                       String    @default("+964 750 123 4567")
+  email                       String    @default("finance@sherzad-enterprise.iq")
+  addressEn                   String    @default("60 Meter Road, Financial District, Erbil, Iraq")
+  addressAr                   String    @default("شارع الستين، الحي المالي، أربيل، العراق")
+  addressKu                   String    @default("شەقامی شەست مەتری، گەڕەکی دارایی، هەولێر، عێراق")
+  taxNumber                   String    @default("IQ-TAX-9940218")
+  baseCurrency                String    @default("USD")
+  defaultDisplayCurrency      String    @default("USD")
+  usdToIqdRate                Decimal   @default(1500.00)
+  defaultTaxRate              Decimal   @default(0.00)
+  salesInvoicePrefix          String    @default("INV-")
+  purchaseInvoicePrefix       String    @default("PUR-")
+  expensePrefix               String    @default("EXP-")
+  journalPrefix               String    @default("JRN-")
+  invoiceFooterEn             String    @default("Thank you for your business. All goods remain property of Sherzad Enterprise until paid in full.")
+  invoiceFooterAr             String    @default("شكراً لتعاملكم معنا. جميع البضائع تبقى ملكاً للشركة حتى سداد كامل القيمة.")
+  invoiceFooterKu             String    @default("سوپاس بۆ مامەڵەکردنتان لەگەڵمان. هەموو کاڵاکان موڵکی کۆمپانیان تا تەواوی پارەکەی دەدرێت.")
+  allowNegativeStock          Boolean   @default(false)
+  expenseApprovalThresholdUsd Decimal   @default(1000.00)
+  fiscalYearStartMonth        Int       @default(1)
+  defaultLanguage             String    @default("ar")
+  enableNotifications         Boolean   @default(true)
+  demoModeEnabled             Boolean   @default(true)
+  lastBackupAt                DateTime?
+  updatedAt                   DateTime  @updatedAt
+}
+
+model ExchangeRateHistory {
+  id            String   @id @default(cuid())
+  fromCurrency  String   @default("USD")
+  toCurrency    String   @default("IQD")
+  rate          Decimal
+  effectiveDate DateTime @default(now())
+  notes         String?
+  createdById   String?
+}
+
+model RolePermission {
+  id              String   @id @default(cuid())
+  role            String   @unique
+  nameEn          String
+  nameAr          String
+  nameKu          String
+  permissionsJson String
+  updatedAt       DateTime @updatedAt
+}
+
+model User {
+  id                String    @id @default(cuid())
+  name              String
+  email             String    @unique
+  username          String    @unique
+  passwordHash      String
+  role              String    @default("SALES_EMPLOYEE")
+  phone             String?
+  isActive          Boolean   @default(true)
+  preferredLanguage String    @default("ar")
+  preferredCurrency String    @default("USD")
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  sessions  Session[]
+  auditLogs AuditLog[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userName     String
+  userRole     String
+  action       String
+  module       String
+  entityType   String
+  entityId     String?
+  description  String
+  metadataJson String?
+  createdAt    DateTime @default(now())
+
+  @@index([module])
+  @@index([createdAt])
+}
+
+model AccountingPeriod {
+  id         String    @id @default(cuid())
+  name       String    @unique
+  startDate  DateTime
+  endDate    DateTime
+  isClosed   Boolean   @default(false)
+  isLocked   Boolean   @default(false)
+  closedById String?
+  closedAt   DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model Account {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  nameEn        String
+  nameAr        String
+  nameKu        String
+  type          String   // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  subType       String   // CASH, BANK, ACCOUNTS_RECEIVABLE, INVENTORY, FIXED_ASSET, ACCOUNTS_PAYABLE, TAX_PAYABLE, OWNER_EQUITY, RETAINED_EARNINGS, SALES_REVENUE, SALES_RETURN, SALES_DISCOUNT, COGS, OPERATING_EXPENSE
+  normalBalance String   // DEBIT, CREDIT
+  parentId      String?
+  parent        Account?  @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children      Account[] @relation("AccountHierarchy")
+  isSystem      Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  balanceUsd    Decimal  @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  journalLines      JournalLine[]
+  financialAccounts FinancialAccount[]
+  expenses          Expense[]
+
+  @@index([type])
+  @@index([subType])
+}
+
+model JournalEntry {
+  id                String        @id @default(cuid())
+  entryNumber       String        @unique
+  date              DateTime      @default(now())
+  description       String
+  referenceType     String        // SALE, SALE_RETURN, PURCHASE, PURCHASE_RETURN, EXPENSE, DEBTOR_COLLECTION, CREDITOR_PAYMENT, CASH_TRANSACTION, STOCK_ADJUSTMENT, MANUAL, REVERSAL
+  referenceId       String?
+  currency          String        @default("USD")
+  exchangeRate      Decimal       @default(1500.00)
+  totalDebitUsd     Decimal
+  totalCreditUsd    Decimal
+  status            String        @default("POSTED") // POSTED, REVERSED
+  reversedByEntryId String?
+  reversesEntryId   String?
+  isDemo            Boolean       @default(false)
+  createdById       String?
+  createdAt         DateTime      @default(now())
+
+  lines JournalLine[]
+
+  @@index([date])
+  @@index([referenceType, referenceId])
+  @@index([status])
+}
+
+model JournalLine {
+  id             String       @id @default(cuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account      @relation(fields: [accountId], references: [id])
+  description    String?
+  debitUsd       Decimal      @default(0)
+  creditUsd      Decimal      @default(0)
+  debitOriginal  Decimal      @default(0)
+  creditOriginal Decimal      @default(0)
+  currency       String       @default("USD")
+  customerId     String?
+  supplierId     String?
+
+  @@index([journalEntryId])
+  @@index([accountId])
+}
+
+model Warehouse {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  nameEn      String
+  nameAr      String
+  nameKu      String
+  location    String?
+  managerName String?
+  phone       String?
+  isDefault   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  stocks           WarehouseStock[]
+  movements        InventoryMovement[]
+  transfersFrom    StockTransfer[]   @relation("TransferFrom")
+  transfersTo      StockTransfer[]   @relation("TransferTo")
+  salesInvoices    SalesInvoice[]
+  purchaseInvoices PurchaseInvoice[]
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  nameEn      String
+  nameAr      String
+  nameKu      String
+  description String?
+  createdAt   DateTime  @default(now())
+  products    Product[]
+}
+
+model Product {
+  id              String   @id @default(cuid())
+  sku             String   @unique
+  barcode         String?  @unique
+  nameEn          String
+  nameAr          String
+  nameKu          String
+  description     String?
+  categoryId      String
+  category        Category @relation(fields: [categoryId], references: [id])
+  unit            String   @default("PCS")
+  purchaseCostUsd Decimal  @default(0)
+  sellingPriceUsd Decimal  @default(0)
+  taxRate         Decimal  @default(0)
+  minStockLevel   Decimal  @default(5)
+  totalStock      Decimal  @default(0)
+  imageUrl        String?
+  isActive        Boolean  @default(true)
+  isDemo          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  warehouseStocks      WarehouseStock[]
+  movements            InventoryMovement[]
+  stockTransfers       StockTransfer[]
+  salesInvoiceItems    SalesInvoiceItem[]
+  purchaseInvoiceItems PurchaseInvoiceItem[]
+
+  @@index([categoryId])
+  @@index([sku])
+}
+
+model WarehouseStock {
+  id          String    @id @default(cuid())
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  quantity    Decimal   @default(0)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([productId, warehouseId])
+}
+
+model InventoryMovement {
+  id            String    @id @default(cuid())
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseId   String
+  warehouse     Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  type          String    // PURCHASE_RECEIPT, PURCHASE_RETURN, SALE_DISPATCH, SALE_RETURN, ADJUSTMENT_IN, ADJUSTMENT_OUT, TRANSFER_IN, TRANSFER_OUT, OPENING_STOCK
+  quantity      Decimal
+  beforeQty     Decimal
+  afterQty      Decimal
+  unitCostUsd   Decimal   @default(0)
+  referenceType String?
+  referenceId   String?
+  reason        String?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+
+  @@index([productId])
+  @@index([warehouseId])
+  @@index([createdAt])
+}
+
+model StockTransfer {
+  id              String    @id @default(cuid())
+  transferNumber  String    @unique
+  fromWarehouseId String
+  fromWarehouse   Warehouse @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+  toWarehouseId   String
+  toWarehouse     Warehouse @relation("TransferTo", fields: [toWarehouseId], references: [id])
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id])
+  quantity        Decimal
+  notes           String?
+  status          String    @default("COMPLETED")
+  createdById     String?
+  createdAt       DateTime  @default(now())
+}
+
+model Customer {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  name              String
+  companyName       String?
+  phone             String
+  email             String?
+  address           String?
+  city              String?
+  creditLimitUsd    Decimal  @default(5000)
+  balanceUsd        Decimal  @default(0)
+  openingBalanceUsd Decimal  @default(0)
+  paymentTermDays   Int      @default(30)
+  notes             String?
+  isActive          Boolean  @default(true)
+  isDemo            Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  salesInvoices SalesInvoice[]
+  debtPayments  DebtPayment[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+model Supplier {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  name              String
+  companyName       String?
+  contactPerson     String?
+  phone             String
+  email             String?
+  address           String?
+  city              String?
+  taxNumber         String?
+  balanceUsd        Decimal  @default(0)
+  openingBalanceUsd Decimal  @default(0)
+  paymentTermDays   Int      @default(30)
+  notes             String?
+  isActive          Boolean  @default(true)
+  isDemo            Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  purchaseInvoices PurchaseInvoice[]
+  debtPayments     DebtPayment[]
+  expenses         Expense[]
+
+  @@index([name])
+}
+
+model FinancialAccount {
+  id                    String    @id @default(cuid())
+  code                  String    @unique
+  nameEn                String
+  nameAr                String
+  nameKu                String
+  type                  String    // CASH_REGISTER, BANK_ACCOUNT
+  currency              String    @default("USD") // USD, IQD
+  bankName              String?
+  accountNumber         String?
+  iban                  String?
+  ledgerAccountId       String
+  ledgerAccount         Account   @relation(fields: [ledgerAccountId], references: [id])
+  balanceOriginal       Decimal   @default(0)
+  balanceUsd            Decimal   @default(0)
+  openingBalanceUsd     Decimal   @default(0)
+  lastReconciledAt      DateTime?
+  lastReconciledBalance Decimal?
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  cashTransactions CashTransaction[] @relation("PrimaryFinancialAccount")
+  transfersIn      CashTransaction[] @relation("TargetFinancialAccount")
+  salesInvoices    SalesInvoice[]
+  purchaseInvoices PurchaseInvoice[]
+  debtPayments     DebtPayment[]
+  expenses         Expense[]
+}
+
+model CashTransaction {
+  id                       String            @id @default(cuid())
+  transactionNumber        String            @unique
+  date                     DateTime          @default(now())
+  type                     String            // DEPOSIT, WITHDRAWAL, TRANSFER, SALE_RECEIPT, PURCHASE_PAYMENT, EXPENSE_PAYMENT, DEBTOR_COLLECTION, CREDITOR_PAYMENT, RECONCILIATION_ADJUSTMENT
+  financialAccountId       String
+  financialAccount         FinancialAccount  @relation("PrimaryFinancialAccount", fields: [financialAccountId], references: [id])
+  targetFinancialAccountId String?
+  targetFinancialAccount   FinancialAccount? @relation("TargetFinancialAccount", fields: [targetFinancialAccountId], references: [id])
+  currency                 String            @default("USD")
+  exchangeRate             Decimal           @default(1500.00)
+  amountOriginal           Decimal
+  amountUsd                Decimal
+  direction                String            // IN, OUT
+  balanceAfterOriginal     Decimal
+  balanceAfterUsd          Decimal
+  category                 String?
+  description              String
+  referenceType            String?
+  referenceId              String?
+  isReconciled             Boolean           @default(false)
+  reconciledAt             DateTime?
+  journalEntryId           String?
+  idempotencyKey           String?           @unique
+  isDemo                   Boolean           @default(false)
+  createdById              String?
+  createdAt                DateTime          @default(now())
+
+  @@index([financialAccountId])
+  @@index([date])
+}
+
+model SalesInvoice {
+  id                 String            @id @default(cuid())
+  invoiceNumber      String            @unique
+  customerId         String
+  customer           Customer          @relation(fields: [customerId], references: [id])
+  warehouseId        String
+  warehouse          Warehouse         @relation(fields: [warehouseId], references: [id])
+  date               DateTime          @default(now())
+  dueDate            DateTime?
+  status             String            @default("DRAFT") // DRAFT, APPROVED, POSTED, PARTIALLY_PAID, PAID, RETURNED, CANCELLED
+  paymentType        String            @default("CASH") // CASH, CREDIT, PARTIAL
+  currency           String            @default("USD")
+  exchangeRate       Decimal           @default(1500.00)
+  subtotalOriginal   Decimal           @default(0)
+  discountOriginal   Decimal           @default(0)
+  taxOriginal        Decimal           @default(0)
+  totalOriginal      Decimal           @default(0)
+  paidOriginal       Decimal           @default(0)
+  dueOriginal        Decimal           @default(0)
+  subtotalUsd        Decimal           @default(0)
+  discountUsd        Decimal           @default(0)
+  taxUsd             Decimal           @default(0)
+  totalUsd           Decimal           @default(0)
+  paidUsd            Decimal           @default(0)
+  dueUsd             Decimal           @default(0)
+  totalCostUsd       Decimal           @default(0)
+  grossProfitUsd     Decimal           @default(0)
+  financialAccountId String?
+  financialAccount   FinancialAccount? @relation(fields: [financialAccountId], references: [id])
+  paymentMethod      String            @default("CASH")
+  notes              String?
+  attachmentUrl      String?
+  journalEntryId     String?
+  idempotencyKey     String?           @unique
+  isDemo             Boolean           @default(false)
+  createdById        String?
+  postedAt           DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  items        SalesInvoiceItem[]
+  debtPayments DebtPayment[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([date])
+}
+
+model SalesInvoiceItem {
+  id                String       @id @default(cuid())
+  salesInvoiceId    String
+  salesInvoice      SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product      @relation(fields: [productId], references: [id])
+  productName       String
+  sku               String
+  quantity          Decimal
+  returnedQty       Decimal      @default(0)
+  unitPriceOriginal Decimal
+  unitPriceUsd      Decimal
+  unitCostUsd       Decimal
+  discountOriginal  Decimal      @default(0)
+  discountUsd       Decimal      @default(0)
+  taxRate           Decimal      @default(0)
+  taxOriginal       Decimal      @default(0)
+  taxUsd            Decimal      @default(0)
+  lineTotalOriginal Decimal
+  lineTotalUsd      Decimal
+  lineProfitUsd     Decimal
+
+  @@index([salesInvoiceId])
+  @@index([productId])
+}
+
+model PurchaseInvoice {
+  id                 String            @id @default(cuid())
+  invoiceNumber      String            @unique
+  supplierInvoiceRef String?
+  supplierId         String
+  supplier           Supplier          @relation(fields: [supplierId], references: [id])
+  warehouseId        String
+  warehouse          Warehouse         @relation(fields: [warehouseId], references: [id])
+  date               DateTime          @default(now())
+  dueDate            DateTime?
+  status             String            @default("DRAFT") // DRAFT, APPROVED, POSTED, PARTIALLY_PAID, PAID, RETURNED, CANCELLED
+  paymentType        String            @default("CASH") // CASH, CREDIT, PARTIAL
+  currency           String            @default("USD")
+  exchangeRate       Decimal           @default(1500.00)
+  subtotalOriginal   Decimal           @default(0)
+  discountOriginal   Decimal           @default(0)
+  taxOriginal        Decimal           @default(0)
+  shippingOriginal   Decimal           @default(0)
+  totalOriginal      Decimal           @default(0)
+  paidOriginal       Decimal           @default(0)
+  dueOriginal        Decimal           @default(0)
+  subtotalUsd        Decimal           @default(0)
+  discountUsd        Decimal           @default(0)
+  taxUsd             Decimal           @default(0)
+  shippingUsd        Decimal           @default(0)
+  totalUsd           Decimal           @default(0)
+  paidUsd            Decimal           @default(0)
+  dueUsd             Decimal           @default(0)
+  financialAccountId String?
+  financialAccount   FinancialAccount? @relation(fields: [financialAccountId], references: [id])
+  paymentMethod      String            @default("CASH")
+  notes              String?
+  attachmentName     String?
+  attachmentUrl      String?
+  journalEntryId     String?
+  idempotencyKey     String?           @unique
+  isDemo             Boolean           @default(false)
+  createdById        String?
+  postedAt           DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  items        PurchaseInvoiceItem[]
+  debtPayments DebtPayment[]
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([date])
+}
+
+model PurchaseInvoiceItem {
+  id                String          @id @default(cuid())
+  purchaseInvoiceId String
+  purchaseInvoice   PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product         @relation(fields: [productId], references: [id])
+  productName       String
+  sku               String
+  quantity          Decimal
+  returnedQty       Decimal         @default(0)
+  unitCostOriginal  Decimal
+  unitCostUsd       Decimal
+  discountOriginal  Decimal         @default(0)
+  discountUsd       Decimal         @default(0)
+  lineTotalOriginal Decimal
+  lineTotalUsd      Decimal
+
+  @@index([purchaseInvoiceId])
+  @@index([productId])
+}
+
+model DebtPayment {
+  id                 String           @id @default(cuid())
+  paymentNumber      String           @unique
+  date               DateTime         @default(now())
+  type               String           // DEBTOR_COLLECTION, CREDITOR_PAYMENT
+  customerId         String?
+  customer           Customer?        @relation(fields: [customerId], references: [id])
+  supplierId         String?
+  supplier           Supplier?        @relation(fields: [supplierId], references: [id])
+  salesInvoiceId     String?
+  salesInvoice       SalesInvoice?    @relation(fields: [salesInvoiceId], references: [id])
+  purchaseInvoiceId  String?
+  purchaseInvoice    PurchaseInvoice? @relation(fields: [purchaseInvoiceId], references: [id])
+  financialAccountId String
+  financialAccount   FinancialAccount @relation(fields: [financialAccountId], references: [id])
+  paymentMethod      String           @default("CASH")
+  currency           String           @default("USD")
+  exchangeRate       Decimal          @default(1500.00)
+  amountOriginal     Decimal
+  amountUsd          Decimal
+  referenceNumber    String?
+  notes              String?
+  journalEntryId     String?
+  idempotencyKey     String?          @unique
+  isDemo             Boolean          @default(false)
+  createdById        String?
+  createdAt          DateTime         @default(now())
+
+  @@index([customerId])
+  @@index([supplierId])
+  @@index([date])
+}
+
+model Expense {
+  id                 String            @id @default(cuid())
+  expenseNumber      String            @unique
+  date               DateTime          @default(now())
+  category           String            // SALARIES, RENT, ELECTRICITY, TRANSPORTATION, MAINTENANCE, MARKETING, COMMUNICATION, OFFICE_SUPPLIES, MISCELLANEOUS
+  title              String
+  description        String?
+  vendorName         String?
+  expenseAccountId   String
+  expenseAccount     Account           @relation(fields: [expenseAccountId], references: [id])
+  financialAccountId String?
+  financialAccount   FinancialAccount? @relation(fields: [financialAccountId], references: [id])
+  supplierId         String?
+  supplier           Supplier?         @relation(fields: [supplierId], references: [id])
+  paymentMethod      String            @default("CASH") // CASH, BANK_TRANSFER, CARD, CREDIT
+  currency           String            @default("USD")
+  exchangeRate       Decimal           @default(1500.00)
+  amountOriginal     Decimal
+  amountUsd          Decimal
+  isRecurring        Boolean           @default(false)
+  recurringInterval  String?           // DAILY, WEEKLY, MONTHLY, YEARLY
+  nextOccurrenceDate DateTime?
+  status             String            @default("POSTED") // PENDING_APPROVAL, APPROVED, POSTED, REJECTED
+  approvedById       String?
+  approvedAt         DateTime?
+  attachmentName     String?
+  attachmentUrl      String?
+  journalEntryId     String?
+  idempotencyKey     String?           @unique
+  isDemo             Boolean           @default(false)
+  createdById        String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([category])
+  @@index([status])
+  @@index([date])
+}

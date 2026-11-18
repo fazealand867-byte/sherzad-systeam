@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Local env & SQLite temp files
+.env
+.env.local
+prisma/dev.db
+prisma/dev.db-journal
+api/storage/*.lock
+public/api/storage/*.lock
+hostinger_public_html/api/storage/*.lock
+
+# Next.js build caches (keep static export assets _next/static for Hostinger Git deploy!)
+.next/
+hostinger_public_html/cache/
+hostinger_public_html/server/
+hostinger_public_html/types/
+hostinger_public_html/diagnostics/
+hostinger_public_html/*.json
+_next/cache/
+_next/server/
+_next/types/
+_next/diagnostics/
+_next/*.json
+
+# Logs
+*.log
+npm-debug.log*

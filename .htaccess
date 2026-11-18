@@ -1,0 +1,25 @@
+# =============================================================================
+# SHERZAD ENTERPRISE ERP — HOSTINGER (Apache / LiteSpeed) .htaccess
+# =============================================================================
+
+DirectoryIndex index.html index.php
+AddDefaultCharset UTF-8
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Protect internal database storage files from direct browser access
+  RewriteRule ^api/storage/ - [F,L]
+
+  # Route /api/<endpoint> requests to api/index.php?route=<endpoint>
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule ^api/([a-zA-Z0-9_-]+)/?$ api/index.php?route=$1 [QSA,L]
+
+  # Serve existing static files and folders directly
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # SPA Fallback to index.html
+  RewriteRule ^ index.html [L]
+</IfModule>
