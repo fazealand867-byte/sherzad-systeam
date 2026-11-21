@@ -1701,7 +1701,7 @@ export function PurchasesModuleView({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-bold mb-1">{t.products.purchaseCost} *</label>
+                <label className="block text-xs font-bold mb-1">{t.purchases.unitCost} *</label>
                 <input
                   type="number"
                   required
