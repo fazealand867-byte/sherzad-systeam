@@ -21,6 +21,7 @@ import {
   Flame,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
+import { CustomDatePicker } from './CustomDatePicker';
 import {
   exportToCsv,
   fmtIqd,
@@ -1319,7 +1320,7 @@ export function ProductsInventoryView({
               </div>
               <div>
                 <label className="block text-xs font-bold mb-1">{t.date}</label>
-                <input type="date" value={wstDate} onChange={(e) => setWstDate(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+                <CustomDatePicker value={wstDate} onChange={setWstDate} lang={lang} />
               </div>
             </div>
             <div>

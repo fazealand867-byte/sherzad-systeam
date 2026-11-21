@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import { exportToCsv, fmtIqd, fmtQty, locName } from '@/lib/client-utils';
+import { CustomDatePicker } from './CustomDatePicker';
 
 /* ============================================================================
    1. REPORTS & PROFIT HUB (IQD-ONLY)
@@ -278,8 +279,8 @@ export function ReportsModuleView({
           {t.nav.reports}
         </h2>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+          <CustomDatePicker value={startDate} onChange={setStartDate} lang={lang} className="w-40" />
+          <CustomDatePicker value={endDate} onChange={setEndDate} lang={lang} className="w-40" />
           <button onClick={() => window.print()} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">
             <Printer className="w-3.5 h-3.5" /> {t.print}
           </button>

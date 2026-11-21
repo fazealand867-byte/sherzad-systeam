@@ -339,6 +339,7 @@ try {
                 'month' => $curMonth,
                 'employees' => $employees,
                 'salaryPayments' => $engine->db['salaryPayments'],
+                'employeeLeaves' => $engine->db['employeeLeaves'] ?? [],
                 'summary' => [
                     'totalEmployees' => count($employees),
                     'activeEmployees' => $activeEmployeesCount,
@@ -1534,6 +1535,7 @@ try {
                 'month' => $month,
                 'employees' => $employees,
                 'salaryPayments' => $payments,
+                'employeeLeaves' => $engine->db['employeeLeaves'] ?? [],
                 'summary' => [
                     'totalEmployees' => count($employees),
                     'activeEmployees' => count(array_filter($employees, fn($e) => ($e['status'] ?? 'ACTIVE') === 'ACTIVE')),
@@ -1613,6 +1615,62 @@ try {
             $res = $engine->recordSalaryPayment($body);
             $engine->saveDatabase();
             echo json_encode($res);
+            exit;
+        }
+
+        if ($action === 'recordOffDays') {
+            $eid = $body['employeeId'] ?? '';
+            $emp = $engine->findById('employees', $eid);
+            if (!$emp) throw new Exception('Employee not found.');
+
+            $days = max(0.5, (float)($body['days'] ?? 1));
+            $dateStr = !empty($body['date']) ? substr(trim((string)$body['date']), 0, 10) : date('Y-m-d');
+            $salaryMonth = !empty($body['salaryMonth']) ? trim((string)$body['salaryMonth']) : substr($dateStr, 0, 7);
+            $hasDeduction = !empty($body['hasDeduction']);
+            $deductionIqd = $hasDeduction ? max(0.0, ErpEngine::roundIqd($body['deductionIqd'] ?? 0)) : 0.0;
+            $reason = trim((string)($body['reason'] ?? ''));
+
+            if (!isset($engine->db['employeeLeaves']) || !is_array($engine->db['employeeLeaves'])) {
+                $engine->db['employeeLeaves'] = [];
+            }
+
+            $leave = [
+                'id' => ErpEngine::cuid('lv_'),
+                'employeeId' => $emp['id'],
+                'employeeName' => $emp['name'],
+                'employeePhone' => $emp['phone'] ?? '',
+                'salaryMonth' => $salaryMonth,
+                'date' => $dateStr,
+                'days' => $days,
+                'hasDeduction' => $hasDeduction && $deductionIqd > 0,
+                'deductionIqd' => $deductionIqd,
+                'reason' => $reason ?: null,
+                'createdAt' => ErpEngine::nowIso(),
+            ];
+            array_unshift($engine->db['employeeLeaves'], $leave);
+            $dedText = $leave['hasDeduction'] ? " (deducted " . number_format($deductionIqd) . " IQD)" : " (no deduction)";
+            $engine->logAudit('EMPLOYEE_OFF_DAYS', 'EMPLOYEES', 'EmployeeLeave', $leave['id'], "Recorded {$days} off day(s) for {$emp['name']} in {$salaryMonth}{$dedText}");
+            $engine->saveDatabase();
+            echo json_encode([
+                'leave' => $leave,
+                'employee' => $engine->hydrateEmployee($emp, $salaryMonth),
+            ]);
+            exit;
+        }
+
+        if ($action === 'deleteOffDays') {
+            $lid = $body['leaveId'] ?? '';
+            $before = count($engine->db['employeeLeaves'] ?? []);
+            $engine->db['employeeLeaves'] = array_values(array_filter(
+                $engine->db['employeeLeaves'] ?? [],
+                fn($lv) => ($lv['id'] ?? '') !== $lid
+            ));
+            if (count($engine->db['employeeLeaves']) === $before) {
+                throw new Exception('Off-day record not found.');
+            }
+            $engine->logAudit('EMPLOYEE_OFF_DAYS_DELETED', 'EMPLOYEES', 'EmployeeLeave', $lid, "Removed off-day record {$lid}");
+            $engine->saveDatabase();
+            echo json_encode(['deleted' => true]);
             exit;
         }
     }

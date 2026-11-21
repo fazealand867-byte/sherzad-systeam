@@ -14,7 +14,9 @@ import {
   Shield,
   AlertCircle,
   Check,
-  History,
+  CalendarOff,
+  Plus,
+  Minus,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import {
@@ -25,6 +27,7 @@ import {
 } from '@/lib/client-utils';
 import { ALL_PERMISSIONS } from '@/lib/auth';
 import { PrintableDocument } from './PrintModal';
+import { CustomDatePicker, CustomMonthPicker } from './CustomDatePicker';
 
 interface EmployeesPayrollProps {
   lang: LanguageCode;
@@ -48,7 +51,7 @@ export function EmployeesPayrollView({
   notify,
 }: EmployeesPayrollProps) {
   const t = translations[lang];
-  const [tab, setTab] = useState<'EMPLOYEES' | 'HISTORY' | 'SYSTEM_USERS'>('EMPLOYEES');
+  const [tab, setTab] = useState<'EMPLOYEES' | 'OFF_DAYS' | 'HISTORY' | 'SYSTEM_USERS'>('EMPLOYEES');
   const [selectedMonth, setSelectedMonth] = useState(currentMonthStr());
   const [monthData, setMonthData] = useState<any>(employeesData);
   const [search, setSearch] = useState('');
@@ -75,6 +78,14 @@ export function EmployeesPayrollView({
   const [payIdemKey, setPayIdemKey] = useState(() => makeIdempotencyKey('sal'));
   const [dupWarning, setDupWarning] = useState<string | null>(null);
 
+  // Off Days & Optional Deduction Modal
+  const [offTarget, setOffTarget] = useState<any | null>(null);
+  const [offDaysCount, setOffDaysCount] = useState('1');
+  const [offDate, setOffDate] = useState(todayDateStr());
+  const [offHasDeduction, setOffHasDeduction] = useState(false);
+  const [offDeductionIqd, setOffDeductionIqd] = useState('');
+  const [offReason, setOffReason] = useState('');
+
   // Admin System Users state
   const [selectedRoleMatrix, setSelectedRoleMatrix] = useState('SALES_EMPLOYEE');
   const [showNewUser, setShowNewUser] = useState(false);
@@ -99,11 +110,83 @@ export function EmployeesPayrollView({
 
   const employees = monthData?.employees || [];
   const salaryPayments = monthData?.salaryPayments || [];
+  const employeeLeaves = monthData?.employeeLeaves || [];
+  const monthLeaves = useMemo(
+    () => employeeLeaves.filter((lv: any) => !selectedMonth || lv.salaryMonth === selectedMonth),
+    [employeeLeaves, selectedMonth]
+  );
   const summary = monthData?.summary || {
     activeEmployees: 0,
     totalPayrollIqd: 0,
     totalPaidIqd: 0,
     totalRemainingIqd: 0,
+  };
+
+  const openOffDaysModal = (emp: any) => {
+    setOffTarget(emp);
+    setOffDaysCount('1');
+    setOffDate(todayDateStr());
+    setOffHasDeduction(false);
+    const dailyRate = Math.round(Number(emp.monthlySalaryIqd || 0) / 30);
+    setOffDeductionIqd(dailyRate > 0 ? String(dailyRate) : '');
+    setOffReason('');
+  };
+
+  const handleSaveOffDays = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!offTarget) return;
+    const days = Math.max(0.5, Number(offDaysCount || 1));
+    const ded = offHasDeduction ? Math.max(0, Math.round(Number(offDeductionIqd || 0))) : 0;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/employees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'recordOffDays',
+          employeeId: offTarget.id,
+          salaryMonth: selectedMonth,
+          date: offDate,
+          days,
+          hasDeduction: offHasDeduction && ded > 0,
+          deductionIqd: ded,
+          reason: offReason.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) notify('error', data.error || 'Could not record off days');
+      else {
+        notify(
+          'success',
+          `${offTarget.name} — ${days} ${lang === 'ku' ? 'ڕۆژ مۆڵەت' : lang === 'ar' ? 'يوم إجازة' : 'day(s) off'}${
+            ded > 0 ? ` (-${fmtIqd(ded, lang)})` : ''
+          } ✓`
+        );
+        setOffTarget(null);
+        await onRefresh();
+        await reloadMonth(selectedMonth);
+      }
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteOffDays = async (leaveId: string) => {
+    if (!window.confirm(lang === 'ku' ? 'دڵنیایت لە سڕینەوەی ئەم تۆمارە؟' : lang === 'ar' ? 'هل أنت متأكد من الحذف؟' : 'Delete this off-day record?')) return;
+    try {
+      const res = await fetch('/api/employees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deleteOffDays', leaveId }),
+      });
+      if (res.ok) {
+        notify('success', '✓');
+        await onRefresh();
+        await reloadMonth(selectedMonth);
+      }
+    } catch {}
   };
 
   const openAddEmployee = () => {
@@ -293,11 +376,11 @@ export function EmployeesPayrollView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <input
-            type="month"
+          <CustomMonthPicker
             value={selectedMonth}
-            onChange={(e) => reloadMonth(e.target.value)}
-            className="px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-mono font-bold"
+            onChange={(val) => reloadMonth(val)}
+            lang={lang}
+            className="w-44"
           />
           <button
             onClick={openAddEmployee}
@@ -346,6 +429,15 @@ export function EmployeesPayrollView({
               }`}
             >
               {t.employees.directoryTab} ({employees.length})
+            </button>
+            <button
+              onClick={() => setTab('OFF_DAYS')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 ${
+                tab === 'OFF_DAYS' ? 'bg-amber-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'
+              }`}
+            >
+              <CalendarOff className="w-3.5 h-3.5" />
+              {lang === 'ku' ? 'مۆڵەت و نەهاتن' : lang === 'ar' ? 'الإجازات والغياب' : 'Off Days'} ({monthLeaves.length})
             </button>
             <button
               onClick={() => setTab('HISTORY')}
@@ -427,7 +519,16 @@ export function EmployeesPayrollView({
                       </span>
                     </td>
                     <td className="py-3 px-4 text-end font-semibold">
-                      {Number(emp.monthlySalaryIqd) > 0 ? fmtIqd(emp.monthlySalaryIqd, lang) : '—'}
+                      <div>{Number(emp.monthlySalaryIqd) > 0 ? fmtIqd(emp.monthlySalaryIqd, lang) : '—'}</div>
+                      {(Number(emp.offDaysThisMonth || 0) > 0 || Number(emp.deductionsThisMonthIqd || 0) > 0) && (
+                        <div className="text-[11px] font-bold text-rose-500 mt-0.5">
+                          {emp.offDaysThisMonth}{' '}
+                          {lang === 'ku' ? 'ڕۆژ مۆڵەت' : lang === 'ar' ? 'يوم إجازة' : 'off'}
+                          {Number(emp.deductionsThisMonthIqd || 0) > 0
+                            ? ` (-${fmtIqd(emp.deductionsThisMonthIqd, lang)})`
+                            : ` (${lang === 'ku' ? 'بێ لێبڕین' : lang === 'ar' ? 'بدون خصم' : 'no deduction'})`}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-end font-bold text-emerald-500">
                       {fmtIqd(emp.paidThisMonthIqd, lang)}
@@ -458,6 +559,14 @@ export function EmployeesPayrollView({
                           {t.employees.paySalary}
                         </button>
                         <button
+                          onClick={() => openOffDaysModal(emp)}
+                          title={lang === 'ku' ? 'تۆمارکردنی مۆڵەت / نەهاتن' : lang === 'ar' ? 'تسجيل إجازة / غياب' : 'Record Off Days'}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 border border-amber-500/30 text-xs font-bold"
+                        >
+                          <CalendarOff className="w-3.5 h-3.5" />
+                          {lang === 'ku' ? 'مۆڵەت' : lang === 'ar' ? 'إجازة' : 'Off Day'}
+                        </button>
+                        <button
                           onClick={() => openEditEmployee(emp)}
                           className="p-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:text-emerald-500"
                         >
@@ -473,6 +582,63 @@ export function EmployeesPayrollView({
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* 1B. OFF DAYS & DEDUCTIONS LOG */}
+        {tab === 'OFF_DAYS' && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
+                <tr>
+                  <th className="py-3 px-4 text-start">{t.date}</th>
+                  <th className="py-3 px-4 text-start">{t.employees.name}</th>
+                  <th className="py-3 px-4 text-center">{lang === 'ku' ? 'ژمارەی ڕۆژ' : lang === 'ar' ? 'عدد الأيام' : 'Off Days'}</th>
+                  <th className="py-3 px-4 text-end">{lang === 'ku' ? 'لێبڕین (د.ع)' : lang === 'ar' ? 'الخصم (د.ع)' : 'Deduction'}</th>
+                  <th className="py-3 px-4 text-start">{t.notes}</th>
+                  <th className="py-3 px-4 text-center">{t.actions}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
+                {monthLeaves.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-10 text-center text-slate-400">
+                      {lang === 'ku' ? 'هیچ مۆڵەتێک بۆ ئەم مانگە تۆمار نەکراوە' : lang === 'ar' ? 'لا توجد إجازات مسجلة لهذا الشهر' : 'No off days recorded for this month'}
+                    </td>
+                  </tr>
+                ) : (
+                  monthLeaves.map((lv: any) => (
+                    <tr key={lv.id}>
+                      <td className="py-3 px-4 font-mono text-xs text-slate-500">{lv.date}</td>
+                      <td className="py-3 px-4 font-bold">{lv.employeeName}</td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-500 text-xs font-black">
+                          {lv.days} {lang === 'ku' ? 'ڕۆژ' : lang === 'ar' ? 'يوم' : 'day(s)'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-end font-black">
+                        {lv.hasDeduction && Number(lv.deductionIqd) > 0 ? (
+                          <span className="text-rose-500">-{fmtIqd(lv.deductionIqd, lang)}</span>
+                        ) : (
+                          <span className="text-emerald-500 text-xs font-bold">
+                            {lang === 'ku' ? 'بێ لێبڕین' : lang === 'ar' ? 'بدون خصم' : 'No Deduction'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-xs text-slate-400">{lv.reason || '—'}</td>
+                      <td className="py-3 px-4 text-center">
+                        <button
+                          onClick={() => handleDeleteOffDays(lv.id)}
+                          className="p-2 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500/20"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -670,7 +836,7 @@ export function EmployeesPayrollView({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold mb-1">{t.employees.startDate}</label>
-                <input type="date" value={empStartDate} onChange={(e) => setEmpStartDate(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+                <CustomDatePicker value={empStartDate} onChange={setEmpStartDate} lang={lang} />
               </div>
               <div>
                 <label className="block text-xs font-bold mb-1">{t.status}</label>
@@ -708,9 +874,23 @@ export function EmployeesPayrollView({
               <div className="text-base font-black text-slate-900 dark:text-white">{payTarget.name}</div>
               <div className="font-mono text-slate-500">{payTarget.phone} • {selectedMonth}</div>
               {Number(payTarget.monthlySalaryIqd) > 0 && (
-                <div className="flex justify-between pt-2 border-t border-teal-500/20 font-bold">
-                  <span>{t.expenses.remainingBalance}:</span>
-                  <span className="text-amber-500">{fmtIqd(payTarget.remainingSalaryIqd, lang)}</span>
+                <div className="pt-2 border-t border-teal-500/20 space-y-1 font-bold">
+                  <div className="flex justify-between text-slate-400">
+                    <span>{t.employees.monthlySalary}:</span>
+                    <span>{fmtIqd(payTarget.monthlySalaryIqd, lang)}</span>
+                  </div>
+                  {Number(payTarget.deductionsThisMonthIqd || 0) > 0 && (
+                    <div className="flex justify-between text-rose-500">
+                      <span>
+                        {lang === 'ku' ? 'لێبڕینی مۆڵەت' : lang === 'ar' ? 'خصم الإجازات' : 'Off-Day Deduction'} ({payTarget.offDaysThisMonth}):
+                      </span>
+                      <span>-{fmtIqd(payTarget.deductionsThisMonthIqd, lang)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>{t.expenses.remainingBalance}:</span>
+                    <span className="text-amber-500 font-black">{fmtIqd(payTarget.remainingSalaryIqd, lang)}</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -753,7 +933,7 @@ export function EmployeesPayrollView({
               </div>
               <div>
                 <label className="block text-xs font-bold mb-1">{t.date}</label>
-                <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+                <CustomDatePicker value={payDate} onChange={setPayDate} lang={lang} />
               </div>
             </div>
 
@@ -777,6 +957,187 @@ export function EmployeesPayrollView({
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setPayTarget(null)} className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-sm font-semibold">{t.cancel}</button>
               <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-black">{t.save}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* RECORD OFF DAYS & OPTIONAL SALARY DEDUCTION MODAL */}
+      {offTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
+          <form
+            onSubmit={handleSaveOffDays}
+            className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl"
+          >
+            <h3 className="text-lg font-black flex items-center gap-2 text-amber-500">
+              <CalendarOff className="w-5 h-5" />
+              {lang === 'ku' ? 'تۆمارکردنی مۆڵەت و ڕۆژی نەهاتن' : lang === 'ar' ? 'تسجيل إجازة / أيام الغياب' : 'Record Employee Off Days'}
+            </h3>
+
+            {/* Employee Salary Summary */}
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-1 text-xs">
+              <div className="text-base font-black text-slate-900 dark:text-white">{offTarget.name}</div>
+              <div className="flex justify-between text-slate-500 pt-1">
+                <span>{t.employees.monthlySalary}:</span>
+                <span className="font-black text-slate-800 dark:text-white">
+                  {fmtIqd(offTarget.monthlySalaryIqd || 0, lang)}
+                </span>
+              </div>
+              {Number(offTarget.monthlySalaryIqd || 0) > 0 && (
+                <div className="flex justify-between text-slate-500">
+                  <span>{lang === 'ku' ? 'نرخی یەک ڕۆژ (مووچە ÷ ٣٠):' : lang === 'ar' ? 'أجر اليوم الواحد:' : 'Daily Rate (Salary ÷ 30):'}</span>
+                  <span className="font-bold text-amber-500">
+                    {fmtIqd(Math.round(Number(offTarget.monthlySalaryIqd) / 30), lang)}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Days Count & Date */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold mb-1.5">
+                  {lang === 'ku' ? 'ژمارەی ڕۆژانی مۆڵەت *' : lang === 'ar' ? 'عدد أيام الإجازة *' : 'Number of Off Days *'}
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.max(0.5, Number(offDaysCount || 1) - 1);
+                      setOffDaysCount(String(next));
+                      if (offHasDeduction && Number(offTarget.monthlySalaryIqd) > 0) {
+                        setOffDeductionIqd(String(Math.round((Number(offTarget.monthlySalaryIqd) / 30) * next)));
+                      }
+                    }}
+                    className="w-9 h-10 rounded-xl bg-slate-100 dark:bg-charcoal-800 flex items-center justify-center font-black"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <input
+                    type="number"
+                    min="0.5"
+                    step="0.5"
+                    required
+                    value={offDaysCount}
+                    onChange={(e) => {
+                      setOffDaysCount(e.target.value);
+                      const d = Number(e.target.value || 0);
+                      if (offHasDeduction && d > 0 && Number(offTarget.monthlySalaryIqd) > 0) {
+                        setOffDeductionIqd(String(Math.round((Number(offTarget.monthlySalaryIqd) / 30) * d)));
+                      }
+                    }}
+                    className="w-full py-2 text-center rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-base font-black"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Number(offDaysCount || 0) + 1;
+                      setOffDaysCount(String(next));
+                      if (offHasDeduction && Number(offTarget.monthlySalaryIqd) > 0) {
+                        setOffDeductionIqd(String(Math.round((Number(offTarget.monthlySalaryIqd) / 30) * next)));
+                      }
+                    }}
+                    className="w-9 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center font-black"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold mb-1.5">{t.date}</label>
+                <CustomDatePicker value={offDate} onChange={setOffDate} lang={lang} />
+              </div>
+            </div>
+
+            {/* OPTIONAL SALARY DEDUCTION TOGGLE BOX */}
+            <div className={`p-4 rounded-2xl border transition space-y-3 ${
+              offHasDeduction
+                ? 'bg-rose-500/10 border-rose-500/40'
+                : 'bg-slate-50 dark:bg-charcoal-950 border-slate-200 dark:border-charcoal-800'
+            }`}>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-black text-slate-900 dark:text-white">
+                    {lang === 'ku'
+                      ? 'لێبڕین لە مووچە (ئارەزوومەندانە)'
+                      : lang === 'ar'
+                      ? 'خصم من الراتب (اختياري)'
+                      : 'Deduct from Salary (Optional)'}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    {offHasDeduction
+                      ? (lang === 'ku' ? 'ئەم بڕە لە مووچەی ئەم مانگەی کەم دەکرێتەوە' : lang === 'ar' ? 'سيتم خصم هذا المبلغ من راتب هذا الشهر' : 'This amount will be deducted from monthly salary')
+                      : (lang === 'ku' ? 'بێ لێبڕین — مووچەکەی کەم ناکاتەوە' : lang === 'ar' ? 'بدون خصم — يحصل على راتبه كاملاً' : 'No deduction — employee keeps full salary')}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !offHasDeduction;
+                    setOffHasDeduction(next);
+                    if (next && Number(offTarget.monthlySalaryIqd) > 0) {
+                      const suggested = Math.round((Number(offTarget.monthlySalaryIqd) / 30) * Number(offDaysCount || 1));
+                      setOffDeductionIqd(String(suggested));
+                    }
+                  }}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-black transition shrink-0 ${
+                    offHasDeduction
+                      ? 'bg-rose-600 text-white shadow'
+                      : 'bg-slate-200 dark:bg-charcoal-800 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  {offHasDeduction
+                    ? (lang === 'ku' ? 'بە لێبڕین ✓' : lang === 'ar' ? 'مع خصم ✓' : 'Deduct ON')
+                    : (lang === 'ku' ? 'بێ لێبڕین' : lang === 'ar' ? 'بدون خصم' : 'Deduct OFF')}
+                </button>
+              </div>
+
+              {offHasDeduction && (
+                <div className="space-y-2 pt-2 border-t border-rose-500/20">
+                  <label className="block text-xs font-bold text-rose-500">
+                    {lang === 'ku' ? 'بڕی لێبڕین (د.ع):' : lang === 'ar' ? 'مبلغ الخصم (د.ع):' : 'Deduction Amount (IQD):'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="20000"
+                    value={offDeductionIqd}
+                    onChange={(e) => setOffDeductionIqd(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-charcoal-900 border border-rose-500/40 text-base font-black text-rose-500"
+                  />
+                  {Number(offTarget.remainingSalaryIqd || 0) > 0 && (
+                    <div className="flex justify-between text-xs font-bold pt-1">
+                      <span className="text-slate-400">
+                        {lang === 'ku' ? 'مووچەی ماوە دوای لێبڕین:' : lang === 'ar' ? 'المتبقي بعد الخصم:' : 'Remaining After Deduction:'}
+                      </span>
+                      <span className="text-emerald-500 font-black">
+                        {fmtIqd(Math.max(0, Number(offTarget.remainingSalaryIqd) - Math.round(Number(offDeductionIqd || 0))), lang)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold mb-1">
+                {lang === 'ku' ? 'هۆکار / تێبینی (ئارەزوومەندانە)' : lang === 'ar' ? 'السبب / ملاحظة (اختياري)' : 'Reason / Notes (Optional)'}
+              </label>
+              <input
+                type="text"
+                value={offReason}
+                onChange={(e) => setOffReason(e.target.value)}
+                placeholder={lang === 'ku' ? 'نموونە: نەخۆشی، مۆڵەتی کەسی...' : lang === 'ar' ? 'مثال: مرض، إجازة خاصة...' : 'e.g. Personal leave, sick day...'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setOffTarget(null)} className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-sm font-semibold">{t.cancel}</button>
+              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-black shadow-lg shadow-amber-600/20">
+                {submitting ? t.saving : t.save}
+              </button>
             </div>
           </form>
         </div>

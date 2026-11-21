@@ -576,7 +576,7 @@ class ErpEngine
             'suppliers', 'financialAccounts', 'cashTransactions', 'salesInvoices',
             'salesInvoiceItems', 'purchaseInvoices', 'purchaseInvoiceItems',
             'debtPayments', 'expenses', 'units', 'expenseCategories',
-            'employees', 'salaryPayments', 'recipes', 'productionBatches',
+            'employees', 'salaryPayments', 'employeeLeaves', 'recipes', 'productionBatches',
             'spoilageRecords',
         ];
         foreach ($arrayKeys as $k) {
@@ -1491,10 +1491,23 @@ class ErpEngine
             }
         }
 
-        $remaining = $monthly > 0 ? max(0.0, self::roundIqd(self::decSub($monthly, $paidTotal))) : 0.0;
+        // Off days & optional salary deductions for this month
+        $offDaysThisMonth = 0.0;
+        $deductionsThisMonthIqd = 0.0;
+        foreach (($this->db['employeeLeaves'] ?? []) as $lv) {
+            if (($lv['employeeId'] ?? '') === $employeeId && ($lv['salaryMonth'] ?? '') === $salaryMonth) {
+                $offDaysThisMonth = self::decAdd($offDaysThisMonth, $lv['days'] ?? 0);
+                if (!empty($lv['hasDeduction']) && (float)($lv['deductionIqd'] ?? 0) > 0) {
+                    $deductionsThisMonthIqd = self::roundIqd(self::decAdd($deductionsThisMonthIqd, $lv['deductionIqd'] ?? 0));
+                }
+            }
+        }
+
+        $netSalary = $monthly > 0 ? max(0.0, self::roundIqd(self::decSub($monthly, $deductionsThisMonthIqd))) : 0.0;
+        $remaining = $monthly > 0 ? max(0.0, self::roundIqd(self::decSub($netSalary, $paidTotal))) : 0.0;
         $status = 'NO_SALARY_SET';
         if ($monthly > 0) {
-            if ($paidTotal <= 0) $status = 'UNPAID';
+            if ($paidTotal <= 0 && $remaining > 0) $status = 'UNPAID';
             elseif ($remaining <= 0) $status = 'PAID';
             else $status = 'PARTIAL';
         } elseif ($paidTotal > 0) {
@@ -1504,6 +1517,9 @@ class ErpEngine
         return [
             'salaryMonth' => $salaryMonth,
             'monthlySalaryIqd' => $monthly,
+            'offDaysThisMonth' => $offDaysThisMonth,
+            'deductionsThisMonthIqd' => $deductionsThisMonthIqd,
+            'netSalaryIqd' => $netSalary,
             'paidThisMonthIqd' => $paidTotal,
             'regularPaidIqd' => $regularPaid,
             'advancesThisMonthIqd' => $advancesTotal,

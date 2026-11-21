@@ -27,6 +27,7 @@ import {
   unitLabel,
 } from '@/lib/units';
 import { SearchableSelect } from './SearchableSelect';
+import { CustomDatePicker } from './CustomDatePicker';
 
 interface ProductionModuleProps {
   lang: LanguageCode;
@@ -544,12 +545,7 @@ export function ProductionModuleView({
               </div>
               <div>
                 <label className="block text-xs font-bold mb-1">{t.date}</label>
-                <input
-                  type="date"
-                  value={prodDate}
-                  onChange={(e) => setProdDate(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
-                />
+                <CustomDatePicker value={prodDate} onChange={setProdDate} lang={lang} />
               </div>
             </div>
 

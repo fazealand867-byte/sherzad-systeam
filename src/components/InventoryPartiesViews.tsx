@@ -20,6 +20,7 @@ import {
 } from '@/lib/client-utils';
 import { SearchableSelect } from './SearchableSelect';
 import { PrintableDocument } from './PrintModal';
+import { CustomDatePicker } from './CustomDatePicker';
 
 interface PartiesDebtViewProps {
   mode: 'CUSTOMERS' | 'SUPPLIERS';
@@ -419,7 +420,7 @@ export function PartiesAndDebtModuleView({
               </div>
               <div>
                 <label className="block text-xs font-bold mb-1">{t.date}</label>
-                <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+                <CustomDatePicker value={payDate} onChange={setPayDate} lang={lang} />
               </div>
             </div>
             <div>

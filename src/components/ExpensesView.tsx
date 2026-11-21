@@ -28,6 +28,7 @@ import {
 } from '@/lib/client-utils';
 import { SearchableSelect } from './SearchableSelect';
 import { PrintableDocument } from './PrintModal';
+import { CustomDatePicker, CustomMonthPicker } from './CustomDatePicker';
 
 interface ExpensesViewProps {
   lang: LanguageCode;
@@ -364,14 +365,6 @@ export function ExpensesModuleView({
             <span className="text-slate-400 me-1.5">{t.expenses.totalPosted}:</span>
             <span className="font-black text-rose-500 text-sm">{fmtIqd(totalPostedIqd, lang)}</span>
           </div>
-
-          <button
-            onClick={() => openModal('SALARY')}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-sm font-bold shadow-lg shadow-teal-600/20 transition"
-          >
-            <Users className="w-4 h-4" />
-            {t.expenses.paySalaryBtn}
-          </button>
 
           <button
             onClick={() => openModal('NORMAL')}
@@ -775,11 +768,10 @@ export function ExpensesModuleView({
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                     {t.expenses.salaryMonth}
                   </label>
-                  <input
-                    type="month"
+                  <CustomMonthPicker
                     value={salaryMonth}
-                    onChange={(e) => setSalaryMonth(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono"
+                    onChange={setSalaryMonth}
+                    lang={lang}
                   />
                 </div>
               </div>
@@ -810,12 +802,10 @@ export function ExpensesModuleView({
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
                   3. {t.date}
                 </label>
-                <input
-                  type="date"
-                  required
+                <CustomDatePicker
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-semibold"
+                  onChange={setDate}
+                  lang={lang}
                 />
               </div>
             </div>
