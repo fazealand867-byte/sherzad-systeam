@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Plus,
+  Minus,
   Search,
   Printer,
   RotateCcw,
@@ -10,13 +11,8 @@ import {
   Trash2,
   ShoppingCart,
   Download,
-  Barcode,
-  AlertTriangle,
   Receipt,
   PackageCheck,
-  ChevronDown,
-  ChevronUp,
-  XCircle,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import {
@@ -38,7 +34,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { PrintableDocument } from './PrintModal';
 
 /* ============================================================================
-   1. SIMPLIFIED & FAST SALES MODULE (IQD-ONLY + UNIT CONVERSION)
+   1. ULTRA-SIMPLE & FAST SALES MODULE (IQD-ONLY + SMART UNIT CONVERSION)
    ============================================================================ */
 
 interface SalesModuleProps {
@@ -71,23 +67,28 @@ export function SalesModuleView({
   notify,
 }: SalesModuleProps) {
   const t = translations[lang];
-  const [viewMode, setViewMode] = useState<'LIST' | 'NEW' | 'POS'>('LIST');
+  const [viewMode, setViewMode] = useState<'LIST' | 'NEW'>('LIST');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [submitting, setSubmitting] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [idemKey, setIdemKey] = useState(() => makeIdempotencyKey('sale'));
 
-  const [customerId, setCustomerId] = useState<string>(customers[0]?.id || '');
-  const [warehouseId, setWarehouseId] = useState<string>(warehouses[0]?.id || '');
-  const [date, setDate] = useState(todayDateStr());
+  // Default to Walk-In Cash Customer if available, otherwise first customer
+  const defaultCustomerId = useMemo(() => {
+    const walkIn = customers.find(
+      (c) =>
+        (c.name || '').toLowerCase().includes('walk-in') ||
+        (c.name || '').includes('نەقد') ||
+        (c.code || '') === 'CUST-0004'
+    );
+    return walkIn?.id || customers[0]?.id || '';
+  }, [customers]);
+
+  const [customerId, setCustomerId] = useState<string>(defaultCustomerId);
   const [paymentType, setPaymentType] = useState<'CASH' | 'CREDIT' | 'PARTIAL'>('CASH');
-  const [financialAccountId, setFinancialAccountId] = useState<string>(financialAccounts[0]?.id || '');
-  const [invoiceDiscountIqd, setInvoiceDiscountIqd] = useState('0');
   const [paidInputIqd, setPaidInputIqd] = useState('');
   const [notes, setNotes] = useState('');
-  const [allowNegativeStock, setAllowNegativeStock] = useState(false);
-  const [posSearch, setPosSearch] = useState('');
+  const [productFilter, setProductFilter] = useState('');
 
   const [lines, setLines] = useState<
     {
@@ -112,43 +113,55 @@ export function SalesModuleView({
   const [returnTarget, setReturnTarget] = useState<any | null>(null);
   const [returnReason, setReturnReason] = useState('');
 
-  const startNewSale = (mode: 'NEW' | 'POS' = 'NEW') => {
+  const startNewSale = () => {
     setIdemKey(makeIdempotencyKey('sale'));
-    setCustomerId((prev) => prev || customers[0]?.id || '');
-    setWarehouseId((prev) => prev || warehouses[0]?.id || '');
-    setFinancialAccountId((prev) => prev || financialAccounts[0]?.id || '');
-    setDate(todayDateStr());
+    setCustomerId(defaultCustomerId || customers[0]?.id || '');
     setPaymentType('CASH');
-    setInvoiceDiscountIqd('0');
     setPaidInputIqd('');
     setNotes('');
+    setProductFilter('');
     setLines([]);
-    setShowAdvanced(false);
-    setViewMode(mode);
+    setViewMode('NEW');
   };
 
   useEffect(() => {
     if (autoOpenNew) {
-      startNewSale('NEW');
+      startNewSale();
       onClearAutoOpen?.();
     }
   }, [autoOpenNew]);
 
   const sellableProducts = useMemo(() => {
-    // Show finished products first, then general, then raw materials
+    // Finished food products first, then general, then raw materials
     const order: Record<string, number> = { FINISHED_PRODUCT: 0, GENERAL: 1, RAW_MATERIAL: 2 };
     return [...products].sort(
       (a, b) => (order[a.productType] ?? 1) - (order[b.productType] ?? 1)
     );
   }, [products]);
 
+  const quickProducts = useMemo(() => {
+    const q = productFilter.trim().toLowerCase();
+    const list = sellableProducts.filter((p) => p.productType !== 'RAW_MATERIAL' || q.length > 0);
+    if (!q) return list;
+    return list.filter(
+      (p) =>
+        (p.nameKu || '').toLowerCase().includes(q) ||
+        (p.nameAr || '').toLowerCase().includes(q) ||
+        (p.nameEn || '').toLowerCase().includes(q) ||
+        (p.sku || '').toLowerCase().includes(q)
+    );
+  }, [sellableProducts, productFilter]);
+
   const addProductToSale = (productId: string) => {
+    if (!productId) return;
     const p = products.find((x) => x.id === productId);
     if (!p) return;
-    const existingIdx = lines.findIndex((l) => l.productId === p.id && l.unit === p.unit);
+    const existingIdx = lines.findIndex((l) => l.productId === p.id);
     if (existingIdx >= 0) {
       const copy = [...lines];
-      copy[existingIdx].quantity = String(Number(copy[existingIdx].quantity || 0) + 1);
+      const currentUnit = copy[existingIdx].unit;
+      const step = currentUnit === 'g' ? 500 : 1;
+      copy[existingIdx].quantity = String(Number(copy[existingIdx].quantity || 0) + step);
       setLines(copy);
     } else {
       setLines([
@@ -158,7 +171,7 @@ export function SalesModuleView({
           name: locName(p, lang),
           baseUnit: p.unit,
           availableStock: Number(p.totalStock || 0),
-          quantity: '1',
+          quantity: p.unit === 'g' ? '500' : '1',
           unit: p.unit,
           unitPriceIqd: String(Number(p.sellingPriceIqd || 0)),
           baseSellingPriceIqd: Number(p.sellingPriceIqd || 0),
@@ -171,6 +184,19 @@ export function SalesModuleView({
   const handleLineUnitChange = (idx: number, newUnit: string) => {
     const copy = [...lines];
     const line = copy[idx];
+    const oldUnit = line.unit;
+    const currentQty = Number(line.quantity || 0);
+
+    // Smart quantity conversion when switching between kg and g so 1 kg becomes 1000 g (not 1 g = 18 IQD!)
+    if (oldUnit !== newUnit && currentQty > 0) {
+      try {
+        const convertedQty = convertQuantity(currentQty, oldUnit, newUnit, units);
+        if (convertedQty > 0) {
+          line.quantity = String(convertedQty);
+        }
+      } catch {}
+    }
+
     line.unit = newUnit;
     try {
       const convertedPrice = convertUnitPrice(line.baseSellingPriceIqd, line.baseUnit, newUnit, units);
@@ -179,25 +205,32 @@ export function SalesModuleView({
     setLines(copy);
   };
 
+  const adjustLineQty = (idx: number, delta: number) => {
+    const copy = [...lines];
+    const line = copy[idx];
+    const step = line.unit === 'g' ? 250 : 1;
+    const nextQty = Math.max(step, Math.round((Number(line.quantity || 0) + delta * step) * 1000) / 1000);
+    line.quantity = String(nextQty);
+    setLines(copy);
+  };
+
   const totals = useMemo(() => {
-    let subtotalIqd = 0;
+    let grandTotalIqd = 0;
     for (const l of lines) {
-      subtotalIqd += Math.round(Number(l.quantity || 0) * Number(l.unitPriceIqd || 0));
+      grandTotalIqd += Math.round(Number(l.quantity || 0) * Number(l.unitPriceIqd || 0));
     }
-    const disc = Math.round(Number(invoiceDiscountIqd || 0));
-    const grandTotalIqd = Math.max(0, subtotalIqd - disc);
     const paidIqd =
       paymentType === 'CASH'
         ? grandTotalIqd
         : paymentType === 'CREDIT'
         ? 0
-        : Math.round(Number(paidInputIqd || 0));
+        : Math.min(grandTotalIqd, Math.max(0, Math.round(Number(paidInputIqd || 0))));
     const dueIqd = Math.max(0, grandTotalIqd - paidIqd);
-    return { subtotalIqd, disc, grandTotalIqd, paidIqd, dueIqd };
-  }, [lines, invoiceDiscountIqd, paymentType, paidInputIqd]);
+    return { grandTotalIqd, paidIqd, dueIqd };
+  }, [lines, paymentType, paidInputIqd]);
 
-  const handleSaveSale = async (targetStatus: 'POSTED' | 'DRAFT') => {
-    const effectiveCustomerId = customerId || customers[0]?.id;
+  const handleSaveSale = async () => {
+    const effectiveCustomerId = customerId || defaultCustomerId || customers[0]?.id;
     if (!effectiveCustomerId) {
       notify('error', t.sales.selectCustomer);
       return;
@@ -215,15 +248,15 @@ export function SalesModuleView({
         body: JSON.stringify({
           action: 'createInvoice',
           customerId: effectiveCustomerId,
-          warehouseId: warehouseId || warehouses[0]?.id,
-          date,
-          status: targetStatus,
+          warehouseId: warehouses[0]?.id,
+          date: todayDateStr(),
+          status: 'POSTED',
           paymentType,
-          invoiceDiscountIqd: Number(invoiceDiscountIqd || 0),
+          invoiceDiscountIqd: 0,
           paidIqd: totals.paidIqd,
-          financialAccountId: financialAccountId || financialAccounts[0]?.id,
+          financialAccountId: financialAccounts[0]?.id,
           notes,
-          allowNegativeStock,
+          allowNegativeStock: true,
           idempotencyKey: idemKey,
           items: lines.map((l) => ({
             productId: l.productId,
@@ -240,9 +273,6 @@ export function SalesModuleView({
         notify('success', `${data.invoice.invoiceNumber} — ${fmtIqd(data.invoice.totalIqd, lang)} ✓`);
         setViewMode('LIST');
         await onRefresh();
-        if (targetStatus === 'POSTED') {
-          onPrint({ type: 'SALES_INVOICE', mode: viewMode === 'POS' ? 'THERMAL' : 'A4', data: data.invoice });
-        }
       }
     } finally {
       setSubmitting(false);
@@ -285,21 +315,9 @@ export function SalesModuleView({
     });
   }, [invoices, statusFilter, searchQuery]);
 
-  const posFilteredProducts = useMemo(() => {
-    const q = posSearch.trim().toLowerCase();
-    if (!q) return sellableProducts;
-    return sellableProducts.filter(
-      (p) =>
-        (p.nameKu || '').toLowerCase().includes(q) ||
-        (p.nameAr || '').toLowerCase().includes(q) ||
-        (p.nameEn || '').toLowerCase().includes(q) ||
-        (p.sku || '').toLowerCase().includes(q)
-    );
-  }, [sellableProducts, posSearch]);
-
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header — Clean 2 buttons only (Invoices List + New Sale) */}
       <div className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm">
         <div>
           <h2 className="text-xl font-black flex items-center gap-2.5 text-slate-900 dark:text-white">
@@ -312,71 +330,224 @@ export function SalesModuleView({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setViewMode('LIST')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold ${
-              viewMode === 'LIST' ? 'bg-charcoal-900 dark:bg-slate-700 text-white' : 'bg-slate-100 dark:bg-charcoal-800'
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+              viewMode === 'LIST'
+                ? 'bg-charcoal-900 dark:bg-slate-700 text-white'
+                : 'bg-slate-100 dark:bg-charcoal-800 text-slate-600 dark:text-slate-300'
             }`}
           >
             {t.sales.invoicesList} ({invoices.length})
           </button>
           <button
-            onClick={() => startNewSale('NEW')}
-            className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg shadow-emerald-600/25"
+            onClick={() => startNewSale()}
+            className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg shadow-emerald-600/25 transition"
           >
             <Plus className="w-4 h-4" />
             {t.sales.newSale}
           </button>
-          <button
-            onClick={() => startNewSale('POS')}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-teal-600/15 text-teal-600 dark:text-teal-400 border border-teal-500/30 text-xs font-bold"
-          >
-            <Barcode className="w-4 h-4" />
-            {t.sales.posMode}
-          </button>
         </div>
       </div>
 
-      {/* SIMPLE FAST SALE BUILDER / POS */}
-      {(viewMode === 'NEW' || viewMode === 'POS') && (
-        <div className={`grid grid-cols-1 ${viewMode === 'POS' ? 'lg:grid-cols-12' : ''} gap-6`}>
-          {viewMode === 'POS' && (
-            <div className="lg:col-span-5 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 space-y-4">
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute top-3 start-3.5" />
+      {/* ULTRA-SIMPLE NEW SALE SCREEN */}
+      {viewMode === 'NEW' && (
+        <div className="max-w-4xl mx-auto w-full bg-white dark:bg-charcoal-900 p-6 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm space-y-6">
+          {/* Step 1: 1-Click Quick Product Selection */}
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label className="text-sm font-black text-slate-800 dark:text-white flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-500 text-xs flex items-center justify-center font-black">
+                  1
+                </span>
+                {lang === 'ku'
+                  ? 'کرتە لە بەرهەم بکە بۆ زیادکردن:'
+                  : lang === 'ar'
+                  ? 'اضغط على المنتج لإضافته:'
+                  : 'Click a product to add:'}
+              </label>
+              <div className="relative w-full sm:w-64">
+                <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
                 <input
                   type="text"
-                  value={posSearch}
-                  onChange={(e) => setPosSearch(e.target.value)}
+                  value={productFilter}
+                  onChange={(e) => setProductFilter(e.target.value)}
                   placeholder={t.sales.selectProduct}
-                  className="w-full ps-10 pe-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm"
+                  className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2.5 max-h-[520px] overflow-y-auto">
-                {posFilteredProducts.map((p) => (
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto p-1">
+              {quickProducts.map((p) => {
+                const inCart = lines.find((l) => l.productId === p.id);
+                return (
                   <button
                     key={p.id}
                     type="button"
                     onClick={() => addProductToSale(p.id)}
-                    className="text-start p-3.5 rounded-xl border border-slate-200 dark:border-charcoal-800 hover:border-emerald-500 bg-slate-50 dark:bg-charcoal-950 transition"
+                    className={`text-start p-3 rounded-xl border transition flex flex-col justify-between ${
+                      inCart
+                        ? 'border-emerald-500 bg-emerald-500/10'
+                        : 'border-slate-200 dark:border-charcoal-800 hover:border-emerald-500/60 bg-slate-50 dark:bg-charcoal-950'
+                    }`}
                   >
-                    <div className="font-bold text-sm text-slate-900 dark:text-white truncate">{locName(p, lang)}</div>
-                    <div className="flex justify-between items-center mt-2 text-xs">
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="font-bold text-sm text-slate-900 dark:text-white leading-snug">
+                        {locName(p, lang)}
+                      </span>
+                      {inCart && (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[11px] font-black">
+                          {inCart.quantity}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-200/60 dark:border-charcoal-800/60 text-xs">
                       <span className="font-black text-emerald-500">{fmtIqd(p.sellingPriceIqd, lang)}</span>
                       <span className="text-[11px] text-slate-400">
-                        {fmtQty(p.totalStock)} {unitLabel(p.unit, lang, units)}
+                        {unitLabel(p.unit, lang, units)}
                       </span>
                     </div>
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
-          )}
+          </div>
 
-          <div className={`${viewMode === 'POS' ? 'lg:col-span-7' : 'max-w-4xl mx-auto w-full'} bg-white dark:bg-charcoal-900 p-6 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm space-y-5`}>
-            {/* Step 1 & 2: Customer + Add Product Searchable Dropdowns */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Step 2: Selected Products List (Simple +/- Quantity, Smart Unit, Price) */}
+          <div className="space-y-2.5">
+            <label className="text-sm font-black text-slate-800 dark:text-white flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-500 text-xs flex items-center justify-center font-black">
+                2
+              </span>
+              {lang === 'ku'
+                ? 'بەرهەمە هەڵبژێردراوەکان (بڕ و یەکە دیاری بکە):'
+                : lang === 'ar'
+                ? 'المنتجات المختارة (حدد الكمية والوحدة):'
+                : 'Selected Items (Set Quantity & Unit):'}
+            </label>
+
+            <div className="border border-slate-200 dark:border-charcoal-800 rounded-2xl overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
+                  <tr>
+                    <th className="py-3 px-4 text-start">{t.products.productName}</th>
+                    <th className="py-3 px-3 text-center w-44">{t.sales.qty}</th>
+                    <th className="py-3 px-2 text-center w-32">{t.unit}</th>
+                    <th className="py-3 px-2 text-end w-36">{t.sales.unitPrice}</th>
+                    <th className="py-3 px-4 text-end w-36">{t.sales.lineTotal}</th>
+                    <th className="py-3 px-2 w-12"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
+                  {lines.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-10 text-center text-slate-400 text-sm">
+                        {lang === 'ku'
+                          ? 'هیچ بەرهەمێک هەڵنەبژێردراوە — کرتە لە بەرهەمەکانی سەرەوە بکە'
+                          : lang === 'ar'
+                          ? 'لم يتم اختيار أي منتج — اضغط على المنتجات أعلاه'
+                          : 'No products added yet — click any product above'}
+                      </td>
+                    </tr>
+                  ) : (
+                    lines.map((line, idx) => {
+                      const qtyNum = Number(line.quantity || 0);
+                      const priceNum = Number(line.unitPriceIqd || 0);
+                      const lineNet = Math.round(qtyNum * priceNum);
+
+                      return (
+                        <tr key={`${line.productId}-${idx}`} className="bg-white dark:bg-charcoal-900">
+                          <td className="py-3 px-4">
+                            <div className="font-black text-base text-slate-900 dark:text-white">
+                              {line.name}
+                            </div>
+                            <div className="text-xs text-slate-400">
+                              {fmtIqd(line.baseSellingPriceIqd, lang)} / {unitLabel(line.baseUnit, lang, units)}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => adjustLineQty(idx, -1)}
+                                className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:bg-slate-200 dark:hover:bg-charcoal-700 flex items-center justify-center font-black"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.001"
+                                value={line.quantity}
+                                onChange={(e) => {
+                                  const c = [...lines];
+                                  c[idx].quantity = e.target.value;
+                                  setLines(c);
+                                }}
+                                className="w-20 px-2 py-2 text-center rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 font-black text-base"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => adjustLineQty(idx, 1)}
+                                className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25 flex items-center justify-center font-black"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                          <td className="py-3 px-2">
+                            <select
+                              value={line.unit}
+                              onChange={(e) => handleLineUnitChange(idx, e.target.value)}
+                              className="w-full px-2.5 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold"
+                            >
+                              {getCompatibleUnits(line.baseUnit, units).map((u) => (
+                                <option key={u.code} value={u.code}>
+                                  {locName(u, lang)}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="py-3 px-2">
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={line.unitPriceIqd}
+                              onChange={(e) => {
+                                const c = [...lines];
+                                c[idx].unitPriceIqd = e.target.value;
+                                setLines(c);
+                              }}
+                              className="w-full px-3 py-2 text-end rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 font-bold"
+                            />
+                          </td>
+                          <td className="py-3 px-4 text-end font-black text-base text-emerald-600 dark:text-emerald-400">
+                            {fmtIqd(lineNet, lang)}
+                          </td>
+                          <td className="py-3 px-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setLines(lines.filter((_, i) => i !== idx))}
+                              className="p-2 rounded-xl text-rose-500 hover:bg-rose-500/10"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Step 3: Customer, Payment Method & Big Save Button */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 bg-slate-50 dark:bg-charcoal-950 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 items-center">
+            <div className="md:col-span-7 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
-                  1. {t.sales.customer} *
+                  {t.sales.customer}
                 </label>
                 <SearchableSelect
                   value={customerId}
@@ -396,134 +567,6 @@ export function SalesModuleView({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
-                  2. {t.sales.selectProduct}
-                </label>
-                <SearchableSelect
-                  value=""
-                  onChange={addProductToSale}
-                  placeholder={t.sales.selectProduct}
-                  options={sellableProducts.map((p) => ({
-                    value: p.id,
-                    label: locName(p, lang),
-                    sublabel: fmtIqd(p.sellingPriceIqd, lang),
-                    badge: `${fmtQty(p.totalStock)} ${unitLabel(p.unit, lang, units)}`,
-                    badgeColor: Number(p.totalStock) <= Number(p.minStockLevel) ? 'rose' : 'emerald',
-                  }))}
-                />
-              </div>
-            </div>
-
-            {/* Step 3 & 4: Line Items with Quantity + Compatible Unit + Price */}
-            <div className="border border-slate-200 dark:border-charcoal-800 rounded-2xl overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
-                  <tr>
-                    <th className="py-2.5 px-3 text-start">{t.products.productName}</th>
-                    <th className="py-2.5 px-2 text-center w-24">{t.sales.qty}</th>
-                    <th className="py-2.5 px-2 text-center w-28">{t.unit}</th>
-                    <th className="py-2.5 px-2 text-end w-32">{t.sales.unitPrice}</th>
-                    <th className="py-2.5 px-3 text-end">{t.sales.lineTotal}</th>
-                    <th className="py-2.5 px-2 w-10"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-                  {lines.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-10 text-center text-slate-400 text-xs">
-                        {t.sales.selectProduct}
-                      </td>
-                    </tr>
-                  ) : (
-                    lines.map((line, idx) => {
-                      const qtyNum = Number(line.quantity || 0);
-                      const priceNum = Number(line.unitPriceIqd || 0);
-                      const lineNet = Math.round(qtyNum * priceNum);
-                      let baseReq = qtyNum;
-                      try {
-                        baseReq = convertQuantity(qtyNum, line.unit, line.baseUnit, units);
-                      } catch {}
-                      const exceeds = baseReq > line.availableStock + 0.0001;
-
-                      return (
-                        <tr key={`${line.productId}-${idx}`}>
-                          <td className="py-2.5 px-3">
-                            <div className="font-bold text-slate-900 dark:text-white">{line.name}</div>
-                            <div className="text-[11px] text-slate-400">
-                              {line.unit !== line.baseUnit && (
-                                <span className="text-teal-500 font-bold me-2">
-                                  = {fmtQty(baseReq)} {unitLabel(line.baseUnit, lang, units)}
-                                </span>
-                              )}
-                              {exceeds && (
-                                <span className="text-rose-500 font-bold inline-flex items-center gap-0.5">
-                                  <AlertTriangle className="w-3 h-3" /> {fmtQty(line.availableStock)} {unitLabel(line.baseUnit, lang, units)}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-2.5 px-2">
-                            <input
-                              type="number"
-                              step="any"
-                              min="0.0001"
-                              value={line.quantity}
-                              onChange={(e) => {
-                                const c = [...lines];
-                                c[idx].quantity = e.target.value;
-                                setLines(c);
-                              }}
-                              className="w-full px-2 py-2 text-center rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 font-bold"
-                            />
-                          </td>
-                          <td className="py-2.5 px-2">
-                            <select
-                              value={line.unit}
-                              onChange={(e) => handleLineUnitChange(idx, e.target.value)}
-                              className="w-full px-2 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold"
-                            >
-                              {getCompatibleUnits(line.baseUnit, units).map((u) => (
-                                <option key={u.code} value={u.code}>{locName(u, lang)}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="py-2.5 px-2">
-                            <input
-                              type="number"
-                              step="any"
-                              min="0"
-                              value={line.unitPriceIqd}
-                              onChange={(e) => {
-                                const c = [...lines];
-                                c[idx].unitPriceIqd = e.target.value;
-                                setLines(c);
-                              }}
-                              className="w-full px-2.5 py-2 text-end rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 font-bold"
-                            />
-                          </td>
-                          <td className="py-2.5 px-3 text-end font-black text-emerald-600 dark:text-emerald-400">
-                            {fmtIqd(lineNet, lang)}
-                          </td>
-                          <td className="py-2.5 px-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => setLines(lines.filter((_, i) => i !== idx))}
-                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Step 5: Payment & Totals */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 dark:bg-charcoal-950 p-4 rounded-2xl border border-slate-200 dark:border-charcoal-800">
-              <div className="space-y-3">
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
                   {t.sales.paymentType}
                 </label>
                 <div className="grid grid-cols-3 gap-2">
@@ -542,107 +585,56 @@ export function SalesModuleView({
                     </button>
                   ))}
                 </div>
+              </div>
 
-                {paymentType === 'PARTIAL' && (
-                  <div>
-                    <label className="block text-xs font-bold mb-1">{t.paid} (IQD)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={paidInputIqd}
-                      onChange={(e) => setPaidInputIqd(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-sm font-black text-emerald-500"
-                    />
-                  </div>
-                )}
+              {paymentType === 'PARTIAL' && (
+                <div>
+                  <label className="block text-xs font-bold mb-1">{t.paid} (د.ع)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="0"
+                    value={paidInputIqd}
+                    onChange={(e) => setPaidInputIqd(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-sm font-black text-emerald-500"
+                  />
+                </div>
+              )}
+            </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-emerald-500 pt-1"
-                >
-                  {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  {t.advancedOptions}
-                </button>
+            <div className="md:col-span-5 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 flex flex-col justify-between space-y-4">
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-bold text-slate-500">{t.total}:</span>
+                  <span className="text-2xl font-black text-emerald-500">
+                    {fmtIqd(totals.grandTotalIqd, lang)}
+                  </span>
+                </div>
 
-                {showAdvanced && (
-                  <div className="space-y-2.5 pt-1">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[11px] font-semibold mb-1">{t.date}</label>
-                        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full px-2.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs" />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold mb-1">{t.sales.discount}</label>
-                        <input type="number" min="0" value={invoiceDiscountIqd} onChange={(e) => setInvoiceDiscountIqd(e.target.value)} className="w-full px-2.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs font-bold" />
-                      </div>
+                {paymentType !== 'CASH' && (
+                  <div className="pt-2 border-t border-slate-200 dark:border-charcoal-800 space-y-1 text-xs font-bold">
+                    <div className="flex justify-between text-emerald-500">
+                      <span>{t.paid}:</span>
+                      <span>{fmtIqd(totals.paidIqd, lang)}</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className="px-2.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs">
-                        {warehouses.map((w) => <option key={w.id} value={w.id}>{locName(w, lang)}</option>)}
-                      </select>
-                      <select value={financialAccountId} onChange={(e) => setFinancialAccountId(e.target.value)} className="px-2.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs">
-                        {financialAccounts.map((fa) => <option key={fa.id} value={fa.id}>{locName(fa, lang)}</option>)}
-                      </select>
+                    <div className="flex justify-between text-rose-500">
+                      <span>{t.due}:</span>
+                      <span>{fmtIqd(totals.dueIqd, lang)}</span>
                     </div>
-                    <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t.notes} className="w-full px-3 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs" />
-                    <label className="flex items-center gap-2 text-xs cursor-pointer">
-                      <input type="checkbox" checked={allowNegativeStock} onChange={(e) => setAllowNegativeStock(e.target.checked)} className="rounded text-emerald-600" />
-                      <span>{lang === 'ku' ? 'ڕێگەدان بە فرۆشتن لە ژێر سفر' : 'Allow negative stock'}</span>
-                    </label>
                   </div>
                 )}
               </div>
 
-              <div className="bg-white dark:bg-charcoal-900 p-4 rounded-xl border border-slate-200 dark:border-charcoal-800 flex flex-col justify-between space-y-2 text-sm">
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs text-slate-500">
-                    <span>{t.total}:</span>
-                    <span className="font-bold">{fmtIqd(totals.subtotalIqd, lang)}</span>
-                  </div>
-                  {totals.disc > 0 && (
-                    <div className="flex justify-between text-xs text-emerald-500">
-                      <span>{t.sales.discount}:</span>
-                      <span>-{fmtIqd(totals.disc, lang)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-xl font-black border-t border-slate-200 dark:border-charcoal-800 pt-2">
-                    <span>{t.total}:</span>
-                    <span className="text-emerald-500">{fmtIqd(totals.grandTotalIqd, lang)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                    <span>{t.paid}:</span>
-                    <span>{fmtIqd(totals.paidIqd, lang)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs font-bold text-rose-500">
-                    <span>{t.due}:</span>
-                    <span>{fmtIqd(totals.dueIqd, lang)}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-3">
-                  {showAdvanced && (
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => handleSaveSale('DRAFT')}
-                      className="px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-charcoal-700 text-xs font-bold"
-                    >
-                      {t.sales.saveDraft}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => handleSaveSale('POSTED')}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-lg shadow-emerald-600/25 transition"
-                  >
-                    <CheckCircle2 className="w-5 h-5" />
-                    {submitting ? t.saving : t.sales.saveInvoice}
-                  </button>
-                </div>
-              </div>
+              <button
+                type="button"
+                disabled={submitting || lines.length === 0}
+                onClick={handleSaveSale}
+                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-black shadow-lg shadow-emerald-600/25 transition"
+              >
+                <CheckCircle2 className="w-5 h-5" />
+                {submitting ? t.saving : t.sales.saveInvoice}
+              </button>
             </div>
           </div>
         </div>
@@ -663,7 +655,7 @@ export function SalesModuleView({
               />
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              {['ALL', 'PAID', 'PARTIALLY_PAID', 'POSTED', 'DRAFT', 'RETURNED'].map((st) => (
+              {['ALL', 'PAID', 'PARTIALLY_PAID', 'POSTED', 'RETURNED'].map((st) => (
                 <button
                   key={st}
                   onClick={() => setStatusFilter(st)}
@@ -752,24 +744,6 @@ export function SalesModuleView({
                         >
                           <Receipt className="w-3.5 h-3.5" />
                         </button>
-                        {inv.status === 'DRAFT' && (
-                          <button
-                            onClick={async () => {
-                              const res = await fetch('/api/sales', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ action: 'postInvoice', invoiceId: inv.id }),
-                              });
-                              if (res.ok) {
-                                notify('success', `${inv.invoiceNumber} posted!`);
-                                await onRefresh();
-                              } else notify('error', (await res.json()).error || 'Failed');
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-bold"
-                          >
-                            Post
-                          </button>
-                        )}
                         {['POSTED', 'PARTIALLY_PAID', 'PAID'].includes(inv.status) && (
                           <button
                             onClick={() => setReturnTarget(inv)}
@@ -846,7 +820,7 @@ export function SalesModuleView({
 }
 
 /* ============================================================================
-   2. SIMPLIFIED & FAST PURCHASES MODULE (IQD-ONLY + UNIT CONVERSION)
+   2. ULTRA-SIMPLE & FAST PURCHASES MODULE (IQD-ONLY + SMART UNIT CONVERSION)
    ============================================================================ */
 
 interface PurchasesModuleProps {
@@ -880,20 +854,14 @@ export function PurchasesModuleView({
 }: PurchasesModuleProps) {
   const t = translations[lang];
   const [showBuilder, setShowBuilder] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [idemKey, setIdemKey] = useState(() => makeIdempotencyKey('pur'));
 
   const [supplierId, setSupplierId] = useState<string>(suppliers[0]?.id || '');
-  const [warehouseId, setWarehouseId] = useState<string>(warehouses[0]?.id || '');
-  const [date, setDate] = useState(todayDateStr());
   const [paymentType, setPaymentType] = useState<'CASH' | 'CREDIT' | 'PARTIAL'>('CASH');
-  const [financialAccountId, setFinancialAccountId] = useState<string>(financialAccounts[0]?.id || '');
   const [paidInputIqd, setPaidInputIqd] = useState('');
-  const [supplierInvoiceRef, setSupplierInvoiceRef] = useState('');
-  const [shippingIqd, setShippingIqd] = useState('0');
-  const [notes, setNotes] = useState('');
+  const [productFilter, setProductFilter] = useState('');
 
   const [lines, setLines] = useState<
     {
@@ -914,16 +882,10 @@ export function PurchasesModuleView({
   const openBuilder = () => {
     setIdemKey(makeIdempotencyKey('pur'));
     setSupplierId((prev) => prev || suppliers[0]?.id || '');
-    setWarehouseId((prev) => prev || warehouses[0]?.id || '');
-    setFinancialAccountId((prev) => prev || financialAccounts[0]?.id || '');
-    setDate(todayDateStr());
     setPaymentType('CASH');
     setPaidInputIqd('');
-    setShippingIqd('0');
-    setSupplierInvoiceRef('');
-    setNotes('');
+    setProductFilter('');
     setLines([]);
-    setShowAdvanced(false);
     setShowBuilder(true);
   };
 
@@ -934,19 +896,29 @@ export function PurchasesModuleView({
     }
   }, [autoOpenNew]);
 
-  // Prioritize Raw Materials first in Purchase product dropdown!
+  // Prioritize Raw Materials first in Purchases
   const buyableProducts = useMemo(() => {
     const order: Record<string, number> = { RAW_MATERIAL: 0, FINISHED_PRODUCT: 1, GENERAL: 2 };
-    return [...products].sort((a, b) => (order[a.productType] ?? 1) - (order[b.productType] ?? 1));
-  }, [products]);
+    const sorted = [...products].sort((a, b) => (order[a.productType] ?? 1) - (order[b.productType] ?? 1));
+    const q = productFilter.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter(
+      (p) =>
+        (p.nameKu || '').toLowerCase().includes(q) ||
+        (p.nameAr || '').toLowerCase().includes(q) ||
+        (p.nameEn || '').toLowerCase().includes(q) ||
+        (p.sku || '').toLowerCase().includes(q)
+    );
+  }, [products, productFilter]);
 
   const addProductLine = (productId: string) => {
     const p = products.find((x) => x.id === productId);
     if (!p) return;
-    const existing = lines.findIndex((l) => l.productId === p.id && l.unit === p.unit);
+    const existing = lines.findIndex((l) => l.productId === p.id);
     if (existing >= 0) {
       const c = [...lines];
-      c[existing].quantity = String(Number(c[existing].quantity || 0) + 1);
+      const step = c[existing].unit === 'g' ? 500 : 1;
+      c[existing].quantity = String(Number(c[existing].quantity || 0) + step);
       setLines(c);
     } else {
       setLines([
@@ -955,7 +927,7 @@ export function PurchasesModuleView({
           productId: p.id,
           name: locName(p, lang),
           baseUnit: p.unit,
-          quantity: '1',
+          quantity: p.unit === 'g' ? '1000' : '1',
           unit: p.unit,
           unitCostIqd: String(Number(p.purchaseCostIqd || 0)),
           basePurchaseCostIqd: Number(p.purchaseCostIqd || 0),
@@ -967,6 +939,18 @@ export function PurchasesModuleView({
   const handleLineUnitChange = (idx: number, newUnit: string) => {
     const c = [...lines];
     const line = c[idx];
+    const oldUnit = line.unit;
+    const currentQty = Number(line.quantity || 0);
+
+    if (oldUnit !== newUnit && currentQty > 0) {
+      try {
+        const convertedQty = convertQuantity(currentQty, oldUnit, newUnit, units);
+        if (convertedQty > 0) {
+          line.quantity = String(convertedQty);
+        }
+      } catch {}
+    }
+
     line.unit = newUnit;
     try {
       const convCost = convertUnitPrice(line.basePurchaseCostIqd, line.baseUnit, newUnit, units);
@@ -975,22 +959,29 @@ export function PurchasesModuleView({
     setLines(c);
   };
 
+  const adjustLineQty = (idx: number, delta: number) => {
+    const c = [...lines];
+    const line = c[idx];
+    const step = line.unit === 'g' ? 500 : 1;
+    const nextQty = Math.max(step, Math.round((Number(line.quantity || 0) + delta * step) * 1000) / 1000);
+    line.quantity = String(nextQty);
+    setLines(c);
+  };
+
   const totals = useMemo(() => {
-    let subtotalIqd = 0;
+    let grandTotalIqd = 0;
     for (const l of lines) {
-      subtotalIqd += Math.round(Number(l.quantity || 0) * Number(l.unitCostIqd || 0));
+      grandTotalIqd += Math.round(Number(l.quantity || 0) * Number(l.unitCostIqd || 0));
     }
-    const ship = Math.round(Number(shippingIqd || 0));
-    const grandTotalIqd = subtotalIqd + ship;
     const paidIqd =
       paymentType === 'CASH'
         ? grandTotalIqd
         : paymentType === 'CREDIT'
         ? 0
-        : Math.round(Number(paidInputIqd || 0));
+        : Math.min(grandTotalIqd, Math.max(0, Math.round(Number(paidInputIqd || 0))));
     const dueIqd = Math.max(0, grandTotalIqd - paidIqd);
-    return { subtotalIqd, ship, grandTotalIqd, paidIqd, dueIqd };
-  }, [lines, shippingIqd, paymentType, paidInputIqd]);
+    return { grandTotalIqd, paidIqd, dueIqd };
+  }, [lines, paymentType, paidInputIqd]);
 
   const handleSavePurchase = async () => {
     const effectiveSupplierId = supplierId || suppliers[0]?.id;
@@ -1006,15 +997,13 @@ export function PurchasesModuleView({
         body: JSON.stringify({
           action: 'createInvoice',
           supplierId: effectiveSupplierId,
-          supplierInvoiceRef,
-          warehouseId: warehouseId || warehouses[0]?.id,
-          date,
+          warehouseId: warehouses[0]?.id,
+          date: todayDateStr(),
           status: 'POSTED',
           paymentType,
-          shippingIqd: totals.ship,
+          shippingIqd: 0,
           paidIqd: totals.paidIqd,
-          financialAccountId: financialAccountId || financialAccounts[0]?.id,
-          notes,
+          financialAccountId: financialAccounts[0]?.id,
           idempotencyKey: idemKey,
           items: lines.map((l) => ({
             productId: l.productId,
@@ -1060,99 +1049,180 @@ export function PurchasesModuleView({
           <p className="text-xs text-slate-500 mt-1">{t.purchases.subtitle}</p>
         </div>
 
-        <button
-          onClick={() => (showBuilder ? setShowBuilder(false) : openBuilder())}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg shadow-emerald-600/25"
-        >
-          <Plus className="w-4 h-4" />
-          {t.purchases.newPurchase}
-        </button>
+        <div className="flex items-center gap-2">
+          {showBuilder && (
+            <button
+              onClick={() => setShowBuilder(false)}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-bold"
+            >
+              {t.sales.invoicesList} ({invoices.length})
+            </button>
+          )}
+          <button
+            onClick={() => openBuilder()}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg shadow-emerald-600/25"
+          >
+            <Plus className="w-4 h-4" />
+            {t.purchases.newPurchase}
+          </button>
+        </div>
       </div>
 
       {showBuilder && (
-        <div className="bg-white dark:bg-charcoal-900 p-6 rounded-2xl border border-emerald-500/40 shadow-lg space-y-5 max-w-4xl mx-auto">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold mb-1.5">1. {t.purchases.supplier} *</label>
-              <SearchableSelect
-                value={supplierId}
-                onChange={setSupplierId}
-                placeholder={t.purchases.selectSupplier}
-                onQuickAdd={() => setShowQuickSupplier(true)}
-                quickAddLabel={t.purchases.newSupplier}
-                options={suppliers.map((s) => ({
-                  value: s.id,
-                  label: s.name,
-                  sublabel: s.phone,
-                  badge: Number(s.balanceIqd) > 0 ? fmtIqd(s.balanceIqd, lang) : undefined,
-                  badgeColor: 'amber',
-                }))}
-              />
+        <div className="bg-white dark:bg-charcoal-900 p-6 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm space-y-6 max-w-4xl mx-auto">
+          {/* Step 1: 1-Click Raw Material / Product Buttons */}
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label className="text-sm font-black text-slate-800 dark:text-white flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-500 text-xs flex items-center justify-center font-black">
+                  1
+                </span>
+                {lang === 'ku'
+                  ? 'کرتە لە کەرەستە بکە بۆ کڕین:'
+                  : lang === 'ar'
+                  ? 'اضغط على المادة لشرائها:'
+                  : 'Click an item to purchase:'}
+              </label>
+              <div className="relative w-full sm:w-64">
+                <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
+                <input
+                  type="text"
+                  value={productFilter}
+                  onChange={(e) => setProductFilter(e.target.value)}
+                  placeholder={t.purchases.selectProduct}
+                  className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold mb-1.5">2. {t.purchases.selectProduct}</label>
-              <SearchableSelect
-                value=""
-                onChange={addProductLine}
-                placeholder={t.purchases.selectProduct}
-                options={buyableProducts.map((p) => ({
-                  value: p.id,
-                  label: locName(p, lang),
-                  sublabel: fmtIqd(p.purchaseCostIqd, lang),
-                  badge: `${fmtQty(p.totalStock)} ${unitLabel(p.unit, lang, units)}`,
-                }))}
-              />
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto p-1">
+              {buyableProducts.map((p) => {
+                const inCart = lines.find((l) => l.productId === p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => addProductLine(p.id)}
+                    className={`text-start p-3 rounded-xl border transition flex flex-col justify-between ${
+                      inCart
+                        ? 'border-emerald-500 bg-emerald-500/10'
+                        : 'border-slate-200 dark:border-charcoal-800 hover:border-emerald-500/60 bg-slate-50 dark:bg-charcoal-950'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="font-bold text-sm text-slate-900 dark:text-white leading-snug">
+                        {locName(p, lang)}
+                      </span>
+                      {inCart && (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[11px] font-black">
+                          {inCart.quantity}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-200/60 dark:border-charcoal-800/60 text-xs">
+                      <span className="font-black text-emerald-500">{fmtIqd(p.purchaseCostIqd, lang)}</span>
+                      <span className="text-[11px] text-slate-400">{unitLabel(p.unit, lang, units)}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
+          {/* Step 2: Selected Items Table */}
           <div className="border border-slate-200 dark:border-charcoal-800 rounded-2xl overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
                 <tr>
-                  <th className="py-2.5 px-3 text-start">{t.products.productName}</th>
-                  <th className="py-2.5 px-2 text-center w-24">{t.sales.qty}</th>
-                  <th className="py-2.5 px-2 text-center w-28">{t.unit}</th>
-                  <th className="py-2.5 px-2 text-end w-32">{t.purchases.unitCost}</th>
-                  <th className="py-2.5 px-3 text-end">{t.sales.lineTotal}</th>
-                  <th className="py-2.5 px-2 w-10"></th>
+                  <th className="py-3 px-4 text-start">{t.products.productName}</th>
+                  <th className="py-3 px-3 text-center w-44">{t.sales.qty}</th>
+                  <th className="py-3 px-2 text-center w-32">{t.unit}</th>
+                  <th className="py-3 px-2 text-end w-36">{t.purchases.unitCost}</th>
+                  <th className="py-3 px-4 text-end w-36">{t.sales.lineTotal}</th>
+                  <th className="py-3 px-2 w-12"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
                 {lines.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-xs text-slate-400">{t.purchases.selectProduct}</td>
+                    <td colSpan={6} className="py-10 text-center text-sm text-slate-400">
+                      {t.purchases.selectProduct}
+                    </td>
                   </tr>
                 ) : (
                   lines.map((l, idx) => {
                     const lineTot = Math.round(Number(l.quantity || 0) * Number(l.unitCostIqd || 0));
-                    let baseAdd = Number(l.quantity || 0);
-                    try {
-                      baseAdd = convertQuantity(baseAdd, l.unit, l.baseUnit, units);
-                    } catch {}
                     return (
                       <tr key={`${l.productId}-${idx}`}>
-                        <td className="py-2.5 px-3">
-                          <div className="font-bold">{l.name}</div>
-                          {l.unit !== l.baseUnit && (
-                            <div className="text-[11px] text-teal-500 font-bold">
-                              +{fmtQty(baseAdd)} {unitLabel(l.baseUnit, lang, units)}
-                            </div>
-                          )}
+                        <td className="py-3 px-4 font-black text-base">{l.name}</td>
+                        <td className="py-3 px-3">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => adjustLineQty(idx, -1)}
+                              className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-charcoal-800 flex items-center justify-center font-black"
+                            >
+                              <Minus className="w-3.5 h-3.5" />
+                            </button>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0.001"
+                              value={l.quantity}
+                              onChange={(e) => {
+                                const c = [...lines];
+                                c[idx].quantity = e.target.value;
+                                setLines(c);
+                              }}
+                              className="w-20 px-2 py-2 text-center rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 font-black text-base"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => adjustLineQty(idx, 1)}
+                              className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center font-black"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
-                        <td className="py-2.5 px-2">
-                          <input type="number" step="any" min="0.0001" value={l.quantity} onChange={(e) => { const c = [...lines]; c[idx].quantity = e.target.value; setLines(c); }} className="w-full px-2 py-2 text-center rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 font-bold" />
-                        </td>
-                        <td className="py-2.5 px-2">
-                          <select value={l.unit} onChange={(e) => handleLineUnitChange(idx, e.target.value)} className="w-full px-2 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold">
-                            {getCompatibleUnits(l.baseUnit, units).map((u) => <option key={u.code} value={u.code}>{locName(u, lang)}</option>)}
+                        <td className="py-3 px-2">
+                          <select
+                            value={l.unit}
+                            onChange={(e) => handleLineUnitChange(idx, e.target.value)}
+                            className="w-full px-2.5 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold"
+                          >
+                            {getCompatibleUnits(l.baseUnit, units).map((u) => (
+                              <option key={u.code} value={u.code}>
+                                {locName(u, lang)}
+                              </option>
+                            ))}
                           </select>
                         </td>
-                        <td className="py-2.5 px-2">
-                          <input type="number" step="any" min="0" value={l.unitCostIqd} onChange={(e) => { const c = [...lines]; c[idx].unitCostIqd = e.target.value; setLines(c); }} className="w-full px-2.5 py-2 text-end rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 font-bold" />
+                        <td className="py-3 px-2">
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={l.unitCostIqd}
+                            onChange={(e) => {
+                              const c = [...lines];
+                              c[idx].unitCostIqd = e.target.value;
+                              setLines(c);
+                            }}
+                            className="w-full px-3 py-2 text-end rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 font-bold"
+                          />
                         </td>
-                        <td className="py-2.5 px-3 text-end font-black text-emerald-500">{fmtIqd(lineTot, lang)}</td>
-                        <td className="py-2.5 px-2 text-center">
-                          <button type="button" onClick={() => setLines(lines.filter((_, i) => i !== idx))} className="text-rose-500 p-1"><Trash2 className="w-4 h-4" /></button>
+                        <td className="py-3 px-4 text-end font-black text-base text-emerald-500">
+                          {fmtIqd(lineTot, lang)}
+                        </td>
+                        <td className="py-3 px-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setLines(lines.filter((_, i) => i !== idx))}
+                            className="text-rose-500 p-2 rounded-xl hover:bg-rose-500/10"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -1162,49 +1232,84 @@ export function PurchasesModuleView({
             </table>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 dark:bg-charcoal-950 p-4 rounded-2xl border border-slate-200 dark:border-charcoal-800">
-            <div className="space-y-3">
+          {/* Step 3: Supplier, Payment Type & Big Save Button */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 bg-slate-50 dark:bg-charcoal-950 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 items-center">
+            <div className="md:col-span-7 space-y-4">
+              <div>
+                <label className="block text-xs font-bold mb-1.5">{t.purchases.supplier}</label>
+                <SearchableSelect
+                  value={supplierId}
+                  onChange={setSupplierId}
+                  placeholder={t.purchases.selectSupplier}
+                  onQuickAdd={() => setShowQuickSupplier(true)}
+                  quickAddLabel={t.purchases.newSupplier}
+                  options={suppliers.map((s) => ({
+                    value: s.id,
+                    label: s.name,
+                    sublabel: s.phone,
+                    badge: Number(s.balanceIqd) > 0 ? fmtIqd(s.balanceIqd, lang) : undefined,
+                    badgeColor: 'amber',
+                  }))}
+                />
+              </div>
+
               <div className="grid grid-cols-3 gap-2">
                 {(['CASH', 'CREDIT', 'PARTIAL'] as const).map((pt) => (
-                  <button key={pt} type="button" onClick={() => setPaymentType(pt)} className={`py-2.5 rounded-xl text-xs font-bold border ${paymentType === pt ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-charcoal-900 border-slate-200 dark:border-charcoal-800'}`}>
+                  <button
+                    key={pt}
+                    type="button"
+                    onClick={() => setPaymentType(pt)}
+                    className={`py-2.5 rounded-xl text-xs font-bold border ${
+                      paymentType === pt
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white dark:bg-charcoal-900 border-slate-200 dark:border-charcoal-800'
+                    }`}
+                  >
                     {pt === 'CASH' ? t.sales.cash : pt === 'CREDIT' ? t.sales.credit : t.sales.partial}
                   </button>
                 ))}
               </div>
               {paymentType === 'PARTIAL' && (
-                <input type="number" min="0" step="any" placeholder={`${t.paid} (IQD)`} value={paidInputIqd} onChange={(e) => setPaidInputIqd(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-sm font-black" />
-              )}
-              <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-xs font-semibold text-slate-400">
-                {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                {t.advancedOptions}
-              </button>
-              {showAdvanced && (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="px-2.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs" />
-                    <input type="text" placeholder={t.purchases.supplierRef} value={supplierInvoiceRef} onChange={(e) => setSupplierInvoiceRef(e.target.value)} className="px-2.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input type="number" min="0" placeholder={t.purchases.shipping} value={shippingIqd} onChange={(e) => setShippingIqd(e.target.value)} className="px-2.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs" />
-                    <select value={financialAccountId} onChange={(e) => setFinancialAccountId(e.target.value)} className="px-2.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs">
-                      {financialAccounts.map((fa) => <option key={fa.id} value={fa.id}>{locName(fa, lang)}</option>)}
-                    </select>
-                  </div>
-                  <input type="text" placeholder={t.notes} value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs" />
-                </div>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder={`${t.paid} (د.ع)`}
+                  value={paidInputIqd}
+                  onChange={(e) => setPaidInputIqd(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-sm font-black"
+                />
               )}
             </div>
 
-            <div className="bg-white dark:bg-charcoal-900 p-4 rounded-xl border border-slate-200 dark:border-charcoal-800 flex flex-col justify-between space-y-2">
-              <div className="space-y-1">
-                <div className="flex justify-between text-xl font-black">
-                  <span>{t.total}:</span>
-                  <span className="text-emerald-500">{fmtIqd(totals.grandTotalIqd, lang)}</span>
+            <div className="md:col-span-5 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 flex flex-col justify-between space-y-4">
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-bold text-slate-500">{t.total}:</span>
+                  <span className="text-2xl font-black text-emerald-500">
+                    {fmtIqd(totals.grandTotalIqd, lang)}
+                  </span>
                 </div>
-                <div className="flex justify-between text-xs font-bold text-emerald-500"><span>{t.paid}:</span><span>{fmtIqd(totals.paidIqd, lang)}</span></div>
-                <div className="flex justify-between text-xs font-bold text-rose-500"><span>{t.due}:</span><span>{fmtIqd(totals.dueIqd, lang)}</span></div>
+                {paymentType !== 'CASH' && (
+                  <div className="pt-2 border-t border-slate-200 dark:border-charcoal-800 space-y-1 text-xs font-bold">
+                    <div className="flex justify-between text-emerald-500">
+                      <span>{t.paid}:</span>
+                      <span>{fmtIqd(totals.paidIqd, lang)}</span>
+                    </div>
+                    <div className="flex justify-between text-rose-500">
+                      <span>{t.due}:</span>
+                      <span>{fmtIqd(totals.dueIqd, lang)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
-              <button type="button" disabled={submitting} onClick={handleSavePurchase} className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-lg shadow-emerald-600/25">
+              <button
+                type="button"
+                disabled={submitting || lines.length === 0}
+                onClick={handleSavePurchase}
+                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-black shadow-lg shadow-emerald-600/25"
+              >
+                <CheckCircle2 className="w-5 h-5" />
                 {submitting ? t.saving : t.purchases.savePurchase}
               </button>
             </div>
