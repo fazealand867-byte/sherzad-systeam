@@ -110,6 +110,13 @@ export function SalesModuleView({
   const [newCustName, setNewCustName] = useState('');
   const [newCustPhone, setNewCustPhone] = useState('');
 
+  // Quick-create new product right inside Sales
+  const [showQuickProduct, setShowQuickProduct] = useState(false);
+  const [newProdName, setNewProdName] = useState('');
+  const [newProdUnit, setNewProdUnit] = useState('kg');
+  const [newProdPriceIqd, setNewProdPriceIqd] = useState('');
+  const [newProdCostIqd, setNewProdCostIqd] = useState('');
+
   // Return modal
   const [returnTarget, setReturnTarget] = useState<any | null>(null);
   const [returnReason, setReturnReason] = useState('');
@@ -134,11 +141,15 @@ export function SalesModuleView({
   }, [autoOpenNew]);
 
   const sellableProducts = useMemo(() => {
-    // Finished food products first, then general, then raw materials
-    const order: Record<string, number> = { FINISHED_PRODUCT: 0, GENERAL: 1, RAW_MATERIAL: 2 };
-    return [...products].sort(
-      (a, b) => (order[a.productType] ?? 1) - (order[b.productType] ?? 1)
-    );
+    // Food finished products first, then newly created items, then raw materials
+    const score = (p: any) => {
+      const sku = String(p.sku || '');
+      if (sku.startsWith('FOOD-')) return 0;
+      if (p.productType === 'FINISHED_PRODUCT' && !sku.startsWith('SKU-10')) return 1;
+      if (p.productType === 'RAW_MATERIAL' || sku.startsWith('RAW-')) return 3;
+      return 2;
+    };
+    return [...products].sort((a, b) => score(a) - score(b));
   }, [products]);
 
   const quickProducts = useMemo(() => {
@@ -307,6 +318,61 @@ export function SalesModuleView({
     }
   };
 
+  const handleQuickCreateProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProdName.trim()) return;
+    setSubmitting(true);
+    try {
+      const sellingPrice = Math.max(0, Number(newProdPriceIqd || 0));
+      const purchaseCost = Math.max(0, Number(newProdCostIqd || Math.round(sellingPrice * 0.7)));
+      const res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'createProduct',
+          nameKu: newProdName.trim(),
+          nameAr: newProdName.trim(),
+          nameEn: newProdName.trim(),
+          productType: 'FINISHED_PRODUCT',
+          unit: newProdUnit,
+          sellingPriceIqd: sellingPrice,
+          purchaseCostIqd: purchaseCost,
+          initialStock: 50,
+          initialStockUnit: newProdUnit,
+          minStockLevel: 5,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.product) {
+        const p = data.product;
+        await onRefresh();
+        setLines((prev) => [
+          ...prev,
+          {
+            productId: p.id,
+            name: locName(p, lang),
+            baseUnit: p.unit,
+            availableStock: Number(p.totalStock || 50),
+            quantity: p.unit === 'g' ? '500' : '1',
+            unit: p.unit,
+            unitPriceIqd: String(Number(p.sellingPriceIqd || sellingPrice)),
+            baseSellingPriceIqd: Number(p.sellingPriceIqd || sellingPrice),
+            baseCostIqd: Number(p.purchaseCostIqd || purchaseCost),
+          },
+        ]);
+        setShowQuickProduct(false);
+        setNewProdName('');
+        setNewProdPriceIqd('');
+        setNewProdCostIqd('');
+        notify('success', `${locName(p, lang)} ✓`);
+      } else {
+        notify('error', data.error || 'Error creating product');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
       if (statusFilter !== 'ALL' && inv.status !== statusFilter) return false;
@@ -368,15 +434,25 @@ export function SalesModuleView({
                   ? 'اضغط على المنتج لإضافته:'
                   : 'Click a product to add:'}
               </label>
-              <div className="relative w-full sm:w-64">
-                <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
-                <input
-                  type="text"
-                  value={productFilter}
-                  onChange={(e) => setProductFilter(e.target.value)}
-                  placeholder={t.sales.selectProduct}
-                  className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
-                />
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <div className="relative flex-1 sm:w-60">
+                  <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
+                  <input
+                    type="text"
+                    value={productFilter}
+                    onChange={(e) => setProductFilter(e.target.value)}
+                    placeholder={t.sales.selectProduct}
+                    className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowQuickProduct(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600/15 text-emerald-500 hover:bg-emerald-600 hover:text-white border border-emerald-500/30 text-xs font-black transition whitespace-nowrap"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t.products.addProduct}
+                </button>
               </div>
             </div>
 
@@ -805,6 +881,59 @@ export function SalesModuleView({
         </div>
       )}
 
+      {/* Quick Create Product inside Sales */}
+      {showQuickProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
+          <form onSubmit={handleQuickCreateProduct} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-sm w-full space-y-4">
+            <h3 className="text-base font-black">{t.products.addProduct}</h3>
+            <div>
+              <label className="block text-xs font-bold mb-1">{t.products.productName} *</label>
+              <input
+                type="text"
+                required
+                placeholder={t.products.productName}
+                value={newProdName}
+                onChange={(e) => setNewProdName(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold mb-1">{t.unit}</label>
+                <select
+                  value={newProdUnit}
+                  onChange={(e) => setNewProdUnit(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold"
+                >
+                  {units.map((u) => (
+                    <option key={u.code} value={u.code}>
+                      {locName(u, lang)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold mb-1">{t.products.sellingPrice} *</label>
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  step="any"
+                  placeholder="0"
+                  value={newProdPriceIqd}
+                  onChange={(e) => setNewProdPriceIqd(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-black text-emerald-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setShowQuickProduct(false)} className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-bold">{t.cancel}</button>
+              <button type="submit" disabled={submitting} className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">{t.save}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Return Dialog */}
       {returnTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
@@ -906,6 +1035,12 @@ export function PurchasesModuleView({
   const [newSuppName, setNewSuppName] = useState('');
   const [newSuppPhone, setNewSuppPhone] = useState('');
 
+  // Quick-create new item/raw material right inside Purchases
+  const [showQuickItem, setShowQuickItem] = useState(false);
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemUnit, setNewItemUnit] = useState('kg');
+  const [newItemCostIqd, setNewItemCostIqd] = useState('');
+
   const openBuilder = () => {
     setIdemKey(makeIdempotencyKey('pur'));
     setSupplierId((prev) => prev || suppliers[0]?.id || '');
@@ -923,10 +1058,16 @@ export function PurchasesModuleView({
     }
   }, [autoOpenNew]);
 
-  // Prioritize Raw Materials first in Purchases
+  // Prioritize Raw Materials & Food items first in Purchases
   const buyableProducts = useMemo(() => {
-    const order: Record<string, number> = { RAW_MATERIAL: 0, FINISHED_PRODUCT: 1, GENERAL: 2 };
-    const sorted = [...products].sort((a, b) => (order[a.productType] ?? 1) - (order[b.productType] ?? 1));
+    const score = (p: any) => {
+      const sku = String(p.sku || '');
+      if (sku.startsWith('RAW-') || p.productType === 'RAW_MATERIAL') return 0;
+      if (sku.startsWith('FOOD-')) return 1;
+      if (!sku.startsWith('SKU-10')) return 2;
+      return 3;
+    };
+    const sorted = [...products].sort((a, b) => score(a) - score(b));
     const q = productFilter.trim().toLowerCase();
     if (!q) return sorted;
     return sorted.filter(
@@ -1110,15 +1251,25 @@ export function PurchasesModuleView({
                   ? 'اضغط على المادة لشرائها:'
                   : 'Click an item to purchase:'}
               </label>
-              <div className="relative w-full sm:w-64">
-                <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
-                <input
-                  type="text"
-                  value={productFilter}
-                  onChange={(e) => setProductFilter(e.target.value)}
-                  placeholder={t.purchases.selectProduct}
-                  className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
-                />
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <div className="relative flex-1 sm:w-60">
+                  <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
+                  <input
+                    type="text"
+                    value={productFilter}
+                    onChange={(e) => setProductFilter(e.target.value)}
+                    placeholder={t.purchases.selectProduct}
+                    className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowQuickItem(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600/15 text-emerald-500 hover:bg-emerald-600 hover:text-white border border-emerald-500/30 text-xs font-black transition whitespace-nowrap"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t.products.addProduct}
+                </button>
               </div>
             </div>
 
@@ -1460,6 +1611,111 @@ export function PurchasesModuleView({
             <input type="text" placeholder={t.employees.phone} value={newSuppPhone} onChange={(e) => setNewSuppPhone(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono" />
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setShowQuickSupplier(false)} className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs">{t.cancel}</button>
+              <button type="submit" disabled={submitting} className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">{t.save}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Quick Create Raw Material / Product inside Purchases */}
+      {showQuickItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newItemName.trim()) return;
+              setSubmitting(true);
+              try {
+                const cost = Math.max(0, Number(newItemCostIqd || 0));
+                const res = await fetch('/api/inventory', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action: 'createProduct',
+                    nameKu: newItemName.trim(),
+                    nameAr: newItemName.trim(),
+                    nameEn: newItemName.trim(),
+                    productType: 'RAW_MATERIAL',
+                    unit: newItemUnit,
+                    purchaseCostIqd: cost,
+                    sellingPriceIqd: Math.round(cost * 1.25),
+                    initialStock: 0,
+                    initialStockUnit: newItemUnit,
+                    minStockLevel: 5,
+                  }),
+                });
+                const data = await res.json();
+                if (res.ok && data.product) {
+                  const p = data.product;
+                  await onRefresh();
+                  setLines((prev) => [
+                    ...prev,
+                    {
+                      productId: p.id,
+                      name: locName(p, lang),
+                      baseUnit: p.unit,
+                      quantity: p.unit === 'g' ? '1000' : '1',
+                      unit: p.unit,
+                      unitCostIqd: String(Number(p.purchaseCostIqd || cost)),
+                      basePurchaseCostIqd: Number(p.purchaseCostIqd || cost),
+                    },
+                  ]);
+                  setShowQuickItem(false);
+                  setNewItemName('');
+                  setNewItemCostIqd('');
+                  notify('success', `${locName(p, lang)} ✓`);
+                } else {
+                  notify('error', data.error || 'Error creating item');
+                }
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+            className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-sm w-full space-y-4"
+          >
+            <h3 className="text-base font-black">{t.products.addProduct}</h3>
+            <div>
+              <label className="block text-xs font-bold mb-1">{t.products.productName} *</label>
+              <input
+                type="text"
+                required
+                placeholder={t.products.productName}
+                value={newItemName}
+                onChange={(e) => setNewItemName(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold mb-1">{t.unit}</label>
+                <select
+                  value={newItemUnit}
+                  onChange={(e) => setNewItemUnit(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold"
+                >
+                  {units.map((u) => (
+                    <option key={u.code} value={u.code}>
+                      {locName(u, lang)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold mb-1">{t.products.purchaseCost} *</label>
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  step="any"
+                  placeholder="0"
+                  value={newItemCostIqd}
+                  onChange={(e) => setNewItemCostIqd(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-black text-emerald-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setShowQuickItem(false)} className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-bold">{t.cancel}</button>
               <button type="submit" disabled={submitting} className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">{t.save}</button>
             </div>
           </form>
