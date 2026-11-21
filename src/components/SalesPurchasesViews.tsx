@@ -86,6 +86,7 @@ export function SalesModuleView({
 
   const [customerId, setCustomerId] = useState<string>(defaultCustomerId);
   const [paymentType, setPaymentType] = useState<'CASH' | 'CREDIT' | 'PARTIAL'>('CASH');
+  const [invoiceDiscountIqd, setInvoiceDiscountIqd] = useState('');
   const [paidInputIqd, setPaidInputIqd] = useState('');
   const [notes, setNotes] = useState('');
   const [productFilter, setProductFilter] = useState('');
@@ -117,6 +118,7 @@ export function SalesModuleView({
     setIdemKey(makeIdempotencyKey('sale'));
     setCustomerId(defaultCustomerId || customers[0]?.id || '');
     setPaymentType('CASH');
+    setInvoiceDiscountIqd('');
     setPaidInputIqd('');
     setNotes('');
     setProductFilter('');
@@ -215,10 +217,12 @@ export function SalesModuleView({
   };
 
   const totals = useMemo(() => {
-    let grandTotalIqd = 0;
+    let subtotalIqd = 0;
     for (const l of lines) {
-      grandTotalIqd += Math.round(Number(l.quantity || 0) * Number(l.unitPriceIqd || 0));
+      subtotalIqd += Math.round(Number(l.quantity || 0) * Number(l.unitPriceIqd || 0));
     }
+    const discountIqd = Math.min(subtotalIqd, Math.max(0, Math.round(Number(invoiceDiscountIqd || 0))));
+    const grandTotalIqd = Math.max(0, subtotalIqd - discountIqd);
     const paidIqd =
       paymentType === 'CASH'
         ? grandTotalIqd
@@ -226,8 +230,8 @@ export function SalesModuleView({
         ? 0
         : Math.min(grandTotalIqd, Math.max(0, Math.round(Number(paidInputIqd || 0))));
     const dueIqd = Math.max(0, grandTotalIqd - paidIqd);
-    return { grandTotalIqd, paidIqd, dueIqd };
-  }, [lines, paymentType, paidInputIqd]);
+    return { subtotalIqd, discountIqd, grandTotalIqd, paidIqd, dueIqd };
+  }, [lines, invoiceDiscountIqd, paymentType, paidInputIqd]);
 
   const handleSaveSale = async () => {
     const effectiveCustomerId = customerId || defaultCustomerId || customers[0]?.id;
@@ -252,7 +256,7 @@ export function SalesModuleView({
           date: todayDateStr(),
           status: 'POSTED',
           paymentType,
-          invoiceDiscountIqd: 0,
+          invoiceDiscountIqd: totals.discountIqd,
           paidIqd: totals.paidIqd,
           financialAccountId: financialAccounts[0]?.id,
           notes,
@@ -542,27 +546,44 @@ export function SalesModuleView({
             </div>
           </div>
 
-          {/* Step 3: Customer, Payment Method & Big Save Button */}
+          {/* Step 3: Customer, Discount, Payment Method & Big Save Button */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-5 bg-slate-50 dark:bg-charcoal-950 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 items-center">
             <div className="md:col-span-7 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
-                  {t.sales.customer}
-                </label>
-                <SearchableSelect
-                  value={customerId}
-                  onChange={setCustomerId}
-                  placeholder={t.sales.selectCustomer}
-                  onQuickAdd={() => setShowQuickCustomer(true)}
-                  quickAddLabel={t.sales.newCustomer}
-                  options={customers.map((c) => ({
-                    value: c.id,
-                    label: c.name,
-                    sublabel: c.phone,
-                    badge: Number(c.balanceIqd) > 0 ? fmtIqd(c.balanceIqd, lang) : undefined,
-                    badgeColor: 'amber',
-                  }))}
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-7">
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
+                    {t.sales.customer}
+                  </label>
+                  <SearchableSelect
+                    value={customerId}
+                    onChange={setCustomerId}
+                    placeholder={t.sales.selectCustomer}
+                    onQuickAdd={() => setShowQuickCustomer(true)}
+                    quickAddLabel={t.sales.newCustomer}
+                    options={customers.map((c) => ({
+                      value: c.id,
+                      label: c.name,
+                      sublabel: c.phone,
+                      badge: Number(c.balanceIqd) > 0 ? fmtIqd(c.balanceIqd, lang) : undefined,
+                      badgeColor: 'amber',
+                    }))}
+                  />
+                </div>
+
+                <div className="sm:col-span-5">
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
+                    {t.sales.discount}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="0"
+                    value={invoiceDiscountIqd}
+                    onChange={(e) => setInvoiceDiscountIqd(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-sm font-black text-amber-500"
+                  />
+                </div>
               </div>
 
               <div>
@@ -605,6 +626,12 @@ export function SalesModuleView({
 
             <div className="md:col-span-5 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 flex flex-col justify-between space-y-4">
               <div className="space-y-2">
+                {totals.discountIqd > 0 && (
+                  <div className="flex justify-between items-center text-xs font-bold text-amber-500">
+                    <span>{t.sales.discount}:</span>
+                    <span>-{fmtIqd(totals.discountIqd, lang)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center">
                   <span className="text-sm font-bold text-slate-500">{t.total}:</span>
                   <span className="text-2xl font-black text-emerald-500">
