@@ -18,12 +18,12 @@
   }
 
   body {
-    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: 'Noto Sans Arabic', 'Segoe UI', 'Tahoma', 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
+    line-height: 1.55;
   }
 }
 
-/* Custom sleek scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -42,7 +42,6 @@
   background: rgba(16, 185, 129, 0.55);
 }
 
-/* Print Stylesheet for Invoices, Thermal Receipts, Statements, and Reports */
 @media print {
   body * {
     visibility: hidden;

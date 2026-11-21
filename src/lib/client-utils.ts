@@ -1,70 +1,84 @@
 import { LanguageCode } from './i18n';
 
 /**
- * Formats a base USD amount into the user's selected display currency ('USD' or 'IQD')
- * using the active exchange rate. Never mixes currencies without explicit conversion.
+ * Formats an Iraqi Dinar (IQD) amount cleanly without unnecessary decimals.
+ * This system operates strictly in Iraqi Dinar (IQD).
+ */
+export function fmtIqd(
+  amountIqd: number | string | null | undefined,
+  lang: LanguageCode = 'ku'
+): string {
+  const num = Math.round(Number(amountIqd || 0));
+  const formatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(num);
+  return lang === 'en' ? `${formatted} IQD` : `${formatted} د.ع`;
+}
+
+/**
+ * Backward-compatible alias that formats IQD amounts cleanly.
+ * Accepts direct IQD values (`amountIqd`) when called with 2 args, or converts legacy USD if explicitly requested.
  */
 export function fmtMoney(
-  amountUsd: number | string | null | undefined,
-  displayCurrency: 'USD' | 'IQD' = 'USD',
-  exchangeRate: number = 1500,
-  lang: LanguageCode = 'ar'
+  amount: number | string | null | undefined,
+  lang: LanguageCode = 'ku'
 ): string {
-  const numUsd = Number(amountUsd || 0);
-  if (displayCurrency === 'IQD') {
-    const iqd = Math.round(numUsd * (exchangeRate || 1500));
-    const formatted = new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(iqd);
-    return lang === 'en' ? `${formatted} IQD` : `${formatted} د.ع`;
-  }
-
-  const formatted = new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(numUsd);
-  return `$${formatted}`;
+  return fmtIqd(amount, lang);
 }
 
 /**
- * Formats an amount in its original transaction currency ('USD' or 'IQD').
+ * Formats fractional or integer quantities cleanly (removes trailing zeros like 2.5000 -> 2.5).
  */
-export function fmtOriginal(
-  amountOrig: number | string | null | undefined,
-  currency: 'USD' | 'IQD' | string = 'USD',
-  lang: LanguageCode = 'ar'
-): string {
-  const num = Number(amountOrig || 0);
-  if (currency === 'IQD') {
-    const formatted = new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(Math.round(num));
-    return lang === 'en' ? `${formatted} IQD` : `${formatted} د.ع`;
-  }
-  const formatted = new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(num);
-  return `$${formatted}`;
+export function fmtQty(qty: number | string | null | undefined): string {
+  const n = Number(qty || 0);
+  if (Number.isInteger(n)) return n.toLocaleString('en-US');
+  return Number(n.toFixed(4)).toLocaleString('en-US', {
+    maximumFractionDigits: 4,
+  });
 }
 
 /**
- * Picks the localized name (`nameAr`, `nameKu`, or `nameEn`) from an entity object.
+ * Picks the localized name (`nameKu`, `nameAr`, or `nameEn`) from an entity object.
+ * Defaults to Kurdish Sorani first when `lang === 'ku'`.
  */
 export function locName(
   item: { nameEn?: string; nameAr?: string; nameKu?: string; name?: string } | null | undefined,
   lang: LanguageCode
 ): string {
   if (!item) return '';
-  if (lang === 'ar') return item.nameAr || item.nameEn || item.name || '';
   if (lang === 'ku') return item.nameKu || item.nameAr || item.nameEn || item.name || '';
-  return item.nameEn || item.name || item.nameAr || '';
+  if (lang === 'ar') return item.nameAr || item.nameKu || item.nameEn || item.name || '';
+  return item.nameEn || item.name || item.nameKu || item.nameAr || '';
 }
 
 /**
- * Exports tabular data to a UTF-8 BOM CSV file compatible with Microsoft Excel (supports Arabic & Kurdish).
+ * Returns today's date in YYYY-MM-DD local format.
+ */
+export function todayDateStr(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Returns current month in YYYY-MM format.
+ */
+export function currentMonthStr(): string {
+  return todayDateStr().slice(0, 7);
+}
+
+/**
+ * Generates a unique idempotency key per form submission to prevent accidental duplicate transactions.
+ */
+export function makeIdempotencyKey(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Exports tabular data to a UTF-8 BOM CSV file compatible with Microsoft Excel (supports Kurdish & Arabic).
  */
 export function exportToCsv(
   filename: string,

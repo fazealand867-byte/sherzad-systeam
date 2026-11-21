@@ -1,9 +1,24 @@
 # =============================================================================
-# SHERZAD ENTERPRISE ERP — HOSTINGER (Apache / LiteSpeed) .htaccess
+# SHERZAD FOOD FACTORY ERP — HOSTINGER (Apache / LiteSpeed) .htaccess
 # =============================================================================
 
 DirectoryIndex index.html index.php
 AddDefaultCharset UTF-8
+
+# Gzip compression for ultra-fast load times
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css application/javascript application/json image/svg+xml
+</IfModule>
+
+# Aggressive immutable browser caching for hashed Next.js static chunks
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType image/png "access plus 1 month"
+  ExpiresByType image/svg+xml "access plus 1 month"
+  ExpiresByType text/html "access plus 0 seconds"
+</IfModule>
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
