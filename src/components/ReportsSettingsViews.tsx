@@ -77,23 +77,60 @@ export function ReportsModuleView({
   const cashTxs = useMemo(() => (cashBankData?.transactions || []).filter((c: any) => inDateRange(c.date)), [cashBankData, startDate, endDate]);
   const pnl = accountingData?.profitAndLoss || {};
 
-  const buildReportRows = (): { headers: string[]; rows: (string | number)[][] } => {
+  const fmtDateSafe = (d: any) => (d ? new Date(d).toLocaleDateString() : '—');
+  const payTypeLabel = (pt: string) =>
+    pt === 'FULL'
+      ? t.expenses.fullPayment
+      : pt === 'PARTIAL'
+      ? t.expenses.partialPayment
+      : pt === 'ADVANCE'
+      ? t.expenses.advancePayment
+      : pt;
+
+  const lblCode = lang === 'ku' ? 'کۆد' : lang === 'ar' ? 'الرمز' : 'Code';
+  const lblAccount = lang === 'ku' ? 'هەژمار' : lang === 'ar' ? 'الحساب' : 'Account';
+  const lblBalance = lang === 'ku' ? 'باڵانس' : lang === 'ar' ? 'الرصيد' : 'Balance';
+  const lblType = lang === 'ku' ? 'جۆر' : lang === 'ar' ? 'النوع' : 'Type';
+
+  const buildReportRows = (): { headers: string[]; rows: (string | number)[][]; highlightLast?: boolean } => {
     switch (selectedReport) {
       case 'PNL':
         return {
+          highlightLast: true,
           headers: [t.description, t.amount],
           rows: [
-            ['Gross Sales Revenue / کۆی فرۆشتن', fmtIqd(pnl.grossSalesRevenueIqd, lang)],
-            ['Sales Returns & Discounts / گەڕاوە و داشکاندن', fmtIqd(-((pnl.salesReturnsIqd || 0) + (pnl.salesDiscountsIqd || 0)), lang)],
-            ['Net Sales Revenue / سافی فرۆشتن', fmtIqd(pnl.netSalesRevenueIqd, lang)],
-            ['Cost of Goods Sold (COGS) / تێچووی فرۆشراو', fmtIqd(-(pnl.totalCogsIqd || 0), lang)],
-            [`Gross Profit (${pnl.grossMarginPercent || 0}%) / قازانجی گشتی`, fmtIqd(pnl.grossProfitIqd, lang)],
+            [
+              lang === 'ku' ? 'کۆی داهاتی فرۆشتن' : lang === 'ar' ? 'إجمالي إيرادات المبيعات' : 'Gross Sales Revenue',
+              fmtIqd(pnl.grossSalesRevenueIqd, lang),
+            ],
+            [
+              lang === 'ku' ? 'گەڕاوە و داشکاندن' : lang === 'ar' ? 'المرتجعات والخصومات' : 'Sales Returns & Discounts',
+              fmtIqd(-((pnl.salesReturnsIqd || 0) + (pnl.salesDiscountsIqd || 0)), lang),
+            ],
+            [
+              lang === 'ku' ? 'سافی داهاتی فرۆشتن' : lang === 'ar' ? 'صافي المبيعات' : 'Net Sales Revenue',
+              fmtIqd(pnl.netSalesRevenueIqd, lang),
+            ],
+            [
+              lang === 'ku' ? 'تێچووی کاڵای فرۆشراو' : lang === 'ar' ? 'تكلفة البضاعة المباعة' : 'Cost of Goods Sold (COGS)',
+              fmtIqd(-(pnl.totalCogsIqd || 0), lang),
+            ],
+            [
+              `${t.dashboard.grossProfit} (${pnl.grossMarginPercent || 0}%)`,
+              fmtIqd(pnl.grossProfitIqd, lang),
+            ],
             ...(pnl.operatingExpenseBreakdown || []).map((ex: any) => [
-              `  • ${locName(ex, lang)}`,
+              `• ${locName(ex, lang)}`,
               fmtIqd(-(ex.amountIqd || 0), lang),
             ]),
-            ['Total Operating Expenses / کۆی خەرجییەکان', fmtIqd(-(pnl.operatingExpensesIqd || 0), lang)],
-            [`NET PROFIT (${pnl.netMarginPercent || 0}%) / قازانجی سافی`, fmtIqd(pnl.netProfitIqd, lang)],
+            [
+              t.dashboard.totalExpenses,
+              fmtIqd(-(pnl.operatingExpensesIqd || 0), lang),
+            ],
+            [
+              `${t.dashboard.netProfit} (${pnl.netMarginPercent || 0}%)`,
+              fmtIqd(pnl.netProfitIqd, lang),
+            ],
           ],
         };
       case 'SALES':
@@ -101,8 +138,8 @@ export function ReportsModuleView({
           headers: ['#', t.date, t.sales.customer, t.status, t.total, t.paid, t.due],
           rows: filteredSales.map((s) => [
             s.invoiceNumber,
-            new Date(s.date).toLocaleDateString(),
-            s.customer?.name || '',
+            fmtDateSafe(s.date),
+            s.customer?.name || '—',
             (t.statuses as Record<string, string>)[s.status] || s.status,
             fmtIqd(s.totalIqd, lang),
             fmtIqd(s.paidIqd, lang),
@@ -114,8 +151,8 @@ export function ReportsModuleView({
           headers: ['#', t.date, t.purchases.supplier, t.status, t.total, t.paid, t.due],
           rows: filteredPurchases.map((p) => [
             p.invoiceNumber,
-            new Date(p.date).toLocaleDateString(),
-            p.supplier?.name || '',
+            fmtDateSafe(p.date),
+            p.supplier?.name || '—',
             (t.statuses as Record<string, string>)[p.status] || p.status,
             fmtIqd(p.totalIqd, lang),
             fmtIqd(p.paidIqd, lang),
@@ -127,7 +164,7 @@ export function ReportsModuleView({
           headers: ['#', t.date, t.category, t.description, t.status, t.amount],
           rows: filteredExpenses.map((e) => [
             e.expenseNumber,
-            new Date(e.date).toLocaleDateString(),
+            fmtDateSafe(e.date),
             e.categoryObj ? locName(e.categoryObj, lang) : ((t.expenses.categories as Record<string, string>)[e.category] || e.category),
             e.employeeName ? `${e.employeeName} (${e.employeePhone || ''})` : e.title,
             (t.statuses as Record<string, string>)[e.status] || e.status,
@@ -139,11 +176,11 @@ export function ReportsModuleView({
           headers: ['#', t.date, t.employees.name, t.employees.phone, t.expenses.salaryMonth, t.status, t.amount, t.expenses.remainingBalance],
           rows: filteredSalaries.map((sp: any) => [
             sp.receiptNumber,
-            new Date(sp.date).toLocaleDateString(),
-            sp.employeeName,
-            sp.employeePhone || '',
-            sp.salaryMonth,
-            sp.paymentType,
+            fmtDateSafe(sp.date),
+            sp.employeeName || '—',
+            sp.employeePhone || '—',
+            sp.salaryMonth || '—',
+            payTypeLabel(sp.paymentType),
             fmtIqd(sp.amountIqd, lang),
             fmtIqd(sp.remainingAfterIqd, lang),
           ]),
@@ -153,16 +190,16 @@ export function ReportsModuleView({
           headers: ['#', t.date, t.production.finishedProduct, t.production.quantityProduced, t.status, t.products.costPrice],
           rows: filteredBatches.map((b: any) => [
             b.batchNumber,
-            new Date(b.date).toLocaleDateString(),
-            locName(b.finishedProduct, lang),
+            fmtDateSafe(b.date),
+            b.finishedProduct ? locName(b.finishedProduct, lang) : '—',
             `${fmtQty(b.quantityProduced)} ${b.unit}`,
-            b.status,
+            (t.statuses as Record<string, string>)[b.status] || b.status,
             fmtIqd(b.totalBatchValueIqd, lang),
           ]),
         };
       case 'INVENTORY':
         return {
-          headers: ['SKU', t.products.productName, t.sales.qty, t.unit, t.products.costPrice, t.products.sellingPrice, t.total],
+          headers: [lblCode, t.products.productName, t.sales.qty, t.unit, t.products.costPrice, t.products.sellingPrice, t.total],
           rows: (inventoryData?.valuation?.items || []).map((i: any) => [
             i.sku,
             locName(i, lang),
@@ -189,11 +226,11 @@ export function ReportsModuleView({
         };
       case 'CASH_FLOW':
         return {
-          headers: ['#', t.date, t.nav.cashbank, t.description, t.amount, 'Balance'],
+          headers: ['#', t.date, t.nav.cashbank, t.description, t.amount, lblBalance],
           rows: cashTxs.map((c: any) => [
             c.transactionNumber,
-            new Date(c.date).toLocaleDateString(),
-            locName(c.financialAccount, lang),
+            fmtDateSafe(c.date),
+            c.financialAccount ? locName(c.financialAccount, lang) : '—',
             c.description,
             `${c.direction === 'IN' ? '+' : '-'}${fmtIqd(c.amountIqd, lang)}`,
             fmtIqd(c.balanceAfterIqd, lang),
@@ -202,20 +239,22 @@ export function ReportsModuleView({
       case 'BALANCE_SHEET': {
         const bs = accountingData?.balanceSheet || {};
         return {
-          headers: ['Type', 'Account', t.amount],
+          highlightLast: true,
+          headers: [lblType, lblAccount, t.amount],
           rows: [
-            ...(bs.assets || []).map((a: any) => ['ASSET', `${a.code} — ${locName(a, lang)}`, fmtIqd(a.balanceIqd, lang)]),
-            ['TOTAL ASSETS', '', fmtIqd(bs.totalAssetsIqd, lang)],
-            ...(bs.liabilities || []).map((l: any) => ['LIABILITY', `${l.code} — ${locName(l, lang)}`, fmtIqd(l.balanceIqd, lang)]),
-            ...(bs.equity || []).map((eq: any) => ['EQUITY', `${eq.code} — ${locName(eq, lang)}`, fmtIqd(eq.balanceIqd, lang)]),
-            ['TOTAL L + E', bs.isBalanced ? '✓ Balanced' : '', fmtIqd(bs.totalLiabilitiesAndEquityIqd, lang)],
+            ...(bs.assets || []).map((a: any) => [lang === 'ku' ? 'سامان' : lang === 'ar' ? 'أصول' : 'ASSET', `${a.code} — ${locName(a, lang)}`, fmtIqd(a.balanceIqd, lang)]),
+            [lang === 'ku' ? 'کۆی سامانەکان' : lang === 'ar' ? 'إجمالي الأصول' : 'TOTAL ASSETS', '', fmtIqd(bs.totalAssetsIqd, lang)],
+            ...(bs.liabilities || []).map((l: any) => [lang === 'ku' ? 'پابەندبوون' : lang === 'ar' ? 'التزامات' : 'LIABILITY', `${l.code} — ${locName(l, lang)}`, fmtIqd(l.balanceIqd, lang)]),
+            ...(bs.equity || []).map((eq: any) => [lang === 'ku' ? 'سەرمایە' : lang === 'ar' ? 'ملكية' : 'EQUITY', `${eq.code} — ${locName(eq, lang)}`, fmtIqd(eq.balanceIqd, lang)]),
+            [lang === 'ku' ? 'کۆی پابەندبوون و سەرمایە' : lang === 'ar' ? 'إجمالي الالتزامات والملكية' : 'TOTAL L + E', bs.isBalanced ? (lang === 'ku' ? '✓ هاوسەنگە' : '✓ Balanced') : '', fmtIqd(bs.totalLiabilitiesAndEquityIqd, lang)],
           ],
         };
       }
       case 'TRIAL_BALANCE': {
         const tb = accountingData?.trialBalance || {};
         return {
-          headers: ['Code', 'Account', t.accounting.debit, t.accounting.credit],
+          highlightLast: true,
+          headers: [lblCode, lblAccount, t.accounting.debit, t.accounting.credit],
           rows: [
             ...(tb.rows || []).map((r: any) => [
               r.code,
@@ -223,7 +262,7 @@ export function ReportsModuleView({
               r.debitBalanceIqd > 0 ? fmtIqd(r.debitBalanceIqd, lang) : '—',
               r.creditBalanceIqd > 0 ? fmtIqd(r.creditBalanceIqd, lang) : '—',
             ]),
-            ['TOTAL', tb.isBalanced ? '✓ Balanced' : '✕', fmtIqd(tb.totalDebitBalanceIqd, lang), fmtIqd(tb.totalCreditBalanceIqd, lang)],
+            [t.total, tb.isBalanced ? (lang === 'ku' ? '✓ هاوسەنگە' : '✓ Balanced') : '✕', fmtIqd(tb.totalDebitBalanceIqd, lang), fmtIqd(tb.totalCreditBalanceIqd, lang)],
           ],
         };
       }
@@ -231,14 +270,15 @@ export function ReportsModuleView({
         const bs = accountingData?.balanceSheet || {};
         const invVal = inventoryData?.valuation || {};
         return {
+          highlightLast: true,
           headers: [t.description, t.amount],
           rows: [
             [t.dashboard.totalSales, fmtIqd(pnl.netSalesRevenueIqd, lang)],
             [t.dashboard.grossProfit, fmtIqd(pnl.grossProfitIqd, lang)],
             [t.dashboard.totalExpenses, fmtIqd(pnl.operatingExpensesIqd, lang)],
-            [t.dashboard.netProfit, fmtIqd(pnl.netProfitIqd, lang)],
             [t.dashboard.inventoryValue, fmtIqd(invVal.totalCostValueIqd, lang)],
-            ['Total Assets', fmtIqd(bs.totalAssetsIqd, lang)],
+            [lang === 'ku' ? 'کۆی سامانەکان' : lang === 'ar' ? 'إجمالي الأصول' : 'Total Assets', fmtIqd(bs.totalAssetsIqd, lang)],
+            [t.dashboard.netProfit, fmtIqd(pnl.netProfitIqd, lang)],
           ],
         };
       }
@@ -340,13 +380,43 @@ export function ReportsModuleView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-                {currentTable.rows.map((row, rIdx) => (
-                  <tr key={rIdx} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
-                    {row.map((cell, cIdx) => (
-                      <td key={cIdx} className="py-2.5 px-4 font-semibold">{cell}</td>
-                    ))}
+                {currentTable.rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={currentTable.headers.length} className="py-12 text-center text-slate-400">
+                      {t.noData}
+                    </td>
                   </tr>
-                ))}
+                ) : (
+                  currentTable.rows.map((row, rIdx) => {
+                    const isLastHighlight = currentTable.highlightLast && rIdx === currentTable.rows.length - 1;
+                    return (
+                      <tr
+                        key={rIdx}
+                        className={
+                          isLastHighlight
+                            ? 'bg-emerald-500/15 font-black text-emerald-500'
+                            : 'hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40'
+                        }
+                      >
+                        {row.map((cell, cIdx) => {
+                          const cellStr = String(cell ?? '');
+                          const isNeg = cellStr.startsWith('-');
+                          const isPos = cellStr.startsWith('+');
+                          return (
+                            <td
+                              key={cIdx}
+                              className={`py-2.5 px-4 ${isLastHighlight ? 'font-black text-sm' : 'font-semibold'} ${
+                                isNeg ? 'text-rose-500' : isPos ? 'text-emerald-500' : ''
+                              }`}
+                            >
+                              {isNeg || isPos ? <span dir="ltr" className="inline-block">{cellStr}</span> : cellStr}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>

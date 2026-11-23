@@ -181,7 +181,14 @@ export function CustomDatePicker({
             : 'border-slate-200 dark:border-charcoal-800 hover:border-emerald-500/50'
         }`}
       >
-        <span className="font-mono text-xs sm:text-sm text-slate-800 dark:text-white tracking-wide">
+        <span
+          dir={value ? 'ltr' : undefined}
+          className={
+            value
+              ? 'font-mono text-xs sm:text-sm text-slate-800 dark:text-white tracking-wide'
+              : 'text-xs sm:text-sm text-slate-400 font-semibold'
+          }
+        >
           {displayLabel}
         </span>
         <Calendar className="w-4 h-4 text-emerald-500 shrink-0" />
