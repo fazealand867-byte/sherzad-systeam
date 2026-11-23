@@ -17,6 +17,7 @@ import {
   XCircle,
   Wallet,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import { exportToCsv, fmtIqd, locName } from '@/lib/client-utils';
@@ -468,11 +469,38 @@ export function AccountingEngineModuleView({
   const periods = accountingData?.periods || [];
 
   const [jrnDesc, setJrnDesc] = useState('');
+  const [jrnSearch, setJrnSearch] = useState('');
   const [jrnLines, setJrnLines] = useState([
     { accountId: accounts[0]?.id || '', debitIqd: '100000', creditIqd: '0' },
     { accountId: accounts[1]?.id || '', debitIqd: '0', creditIqd: '100000' },
   ]);
   const [selectedLedgerCode, setSelectedLedgerCode] = useState('ALL');
+
+  const accountTypeBadge = (type: string) => {
+    const map: Record<string, { ku: string; ar: string; en: string; cls: string }> = {
+      ASSET: { ku: 'سامان', ar: 'أصول', en: 'Asset', cls: 'bg-emerald-500/15 text-emerald-500' },
+      LIABILITY: { ku: 'پابەندبوون', ar: 'التزامات', en: 'Liability', cls: 'bg-rose-500/15 text-rose-500' },
+      EQUITY: { ku: 'سەرمایە', ar: 'ملكية', en: 'Equity', cls: 'bg-teal-500/15 text-teal-500' },
+      REVENUE: { ku: 'داهات', ar: 'إيرادات', en: 'Revenue', cls: 'bg-blue-500/15 text-blue-500' },
+      EXPENSE: { ku: 'خەرجی', ar: 'مصروفات', en: 'Expense', cls: 'bg-amber-500/15 text-amber-500' },
+    };
+    const info = map[type] || { ku: type, ar: type, en: type, cls: 'bg-slate-200 dark:bg-charcoal-800 text-slate-500' };
+    return (
+      <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${info.cls}`}>
+        {lang === 'ku' ? info.ku : lang === 'ar' ? info.ar : info.en}
+      </span>
+    );
+  };
+
+  const filteredJournals = useMemo(() => {
+    const q = jrnSearch.trim().toLowerCase();
+    if (!q) return journals;
+    return journals.filter(
+      (j: any) =>
+        (j.entryNumber || '').toLowerCase().includes(q) ||
+        (j.description || '').toLowerCase().includes(q)
+    );
+  }, [journals, jrnSearch]);
 
   const manualTotals = useMemo(() => {
     let debit = 0;
@@ -560,11 +588,25 @@ export function AccountingEngineModuleView({
 
       {tab === 'TRIAL_BALANCE' && trialBalance && (
         <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 overflow-hidden">
-          <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex justify-between items-center">
+          <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex flex-wrap justify-between items-center gap-2">
             <h3 className="text-sm font-black">{t.accounting.trialBalance}</h3>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold ${trialBalance.isBalanced ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-500'}`}>
-              {trialBalance.isBalanced ? lblBalanced : lblUnbalanced}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`px-3 py-1 rounded-full text-xs font-bold ${trialBalance.isBalanced ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-500'}`}>
+                {trialBalance.isBalanced ? lblBalanced : lblUnbalanced}
+              </span>
+              <button
+                onClick={() =>
+                  exportToCsv(
+                    'trial-balance-iqd',
+                    [lblCode, lblAccount, t.accounting.debit, t.accounting.credit],
+                    (trialBalance.rows || []).map((r: any) => [r.code, locName(r, lang), r.debitBalanceIqd || 0, r.creditBalanceIqd || 0])
+                  )
+                }
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold"
+              >
+                <Download className="w-3.5 h-3.5" /> Excel
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -578,19 +620,19 @@ export function AccountingEngineModuleView({
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
                 {(trialBalance.rows || []).map((r: any) => (
-                  <tr key={r.accountId}>
+                  <tr key={r.accountId} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
                     <td className="py-2.5 px-4 font-mono font-bold text-emerald-500">{r.code}</td>
                     <td className="py-2.5 px-4 font-semibold">{locName(r, lang)}</td>
-                    <td className="py-2.5 px-4 text-end font-mono font-bold">{r.debitBalanceIqd > 0 ? fmtIqd(r.debitBalanceIqd, lang) : '—'}</td>
-                    <td className="py-2.5 px-4 text-end font-mono font-bold">{r.creditBalanceIqd > 0 ? fmtIqd(r.creditBalanceIqd, lang) : '—'}</td>
+                    <td className="py-2.5 px-4 text-end tabular-nums font-bold">{r.debitBalanceIqd > 0 ? fmtIqd(r.debitBalanceIqd, lang) : '—'}</td>
+                    <td className="py-2.5 px-4 text-end tabular-nums font-bold">{r.creditBalanceIqd > 0 ? fmtIqd(r.creditBalanceIqd, lang) : '—'}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot className="bg-charcoal-900 text-white font-black">
                 <tr>
                   <td colSpan={2} className="py-3 px-4">{t.total}</td>
-                  <td className="py-3 px-4 text-end text-emerald-400">{fmtIqd(trialBalance.totalDebitBalanceIqd, lang)}</td>
-                  <td className="py-3 px-4 text-end text-emerald-400">{fmtIqd(trialBalance.totalCreditBalanceIqd, lang)}</td>
+                  <td className="py-3 px-4 text-end tabular-nums text-emerald-400">{fmtIqd(trialBalance.totalDebitBalanceIqd, lang)}</td>
+                  <td className="py-3 px-4 text-end tabular-nums text-emerald-400">{fmtIqd(trialBalance.totalCreditBalanceIqd, lang)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -642,7 +684,17 @@ export function AccountingEngineModuleView({
 
       {tab === 'JOURNALS' && (
         <div className="space-y-3">
-          {journals.map((jrn: any) => (
+          <div className="relative w-full sm:w-80">
+            <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
+            <input
+              type="text"
+              value={jrnSearch}
+              onChange={(e) => setJrnSearch(e.target.value)}
+              placeholder={t.searchPlaceholder}
+              className="w-full ps-9 pe-3 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-xs"
+            />
+          </div>
+          {filteredJournals.map((jrn: any) => (
             <div key={jrn.id} className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 p-4 space-y-2 text-xs">
               <div className="flex flex-wrap justify-between items-center gap-2 border-b border-slate-100 dark:border-charcoal-800 pb-2">
                 <div>
@@ -684,8 +736,8 @@ export function AccountingEngineModuleView({
                         <span className="font-mono text-emerald-500 me-1.5">{line.account?.code}</span>
                         {line.account ? locName(line.account, lang) : '—'}
                       </td>
-                      <td className="py-1 text-end font-mono font-bold w-36">{Number(line.debitIqd) > 0 ? fmtIqd(line.debitIqd, lang) : '—'}</td>
-                      <td className="py-1 text-end font-mono font-bold w-36">{Number(line.creditIqd) > 0 ? fmtIqd(line.creditIqd, lang) : '—'}</td>
+                      <td className="py-1 text-end tabular-nums font-bold w-36">{Number(line.debitIqd) > 0 ? fmtIqd(line.debitIqd, lang) : '—'}</td>
+                      <td className="py-1 text-end tabular-nums font-bold w-36">{Number(line.creditIqd) > 0 ? fmtIqd(line.creditIqd, lang) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -697,12 +749,35 @@ export function AccountingEngineModuleView({
 
       {tab === 'LEDGER' && (
         <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 overflow-hidden">
-          <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex justify-between items-center">
+          <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex flex-wrap justify-between items-center gap-2">
             <h3 className="text-sm font-black">{t.accounting.generalLedger}</h3>
-            <select value={selectedLedgerCode} onChange={(e) => setSelectedLedgerCode(e.target.value)} className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs">
-              <option value="ALL">{t.all}</option>
-              {accounts.map((a: any) => <option key={a.id} value={a.code}>{a.code} — {locName(a, lang)}</option>)}
-            </select>
+            <div className="flex items-center gap-2">
+              <select value={selectedLedgerCode} onChange={(e) => setSelectedLedgerCode(e.target.value)} className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold">
+                <option value="ALL">{t.all}</option>
+                {accounts.map((a: any) => <option key={a.id} value={a.code}>{a.code} — {locName(a, lang)}</option>)}
+              </select>
+              <button
+                onClick={() =>
+                  exportToCsv(
+                    'general-ledger-iqd',
+                    [t.date, '#', lblAccount, t.accounting.debit, t.accounting.credit, lblBalance],
+                    generalLedger
+                      .filter((l: any) => selectedLedgerCode === 'ALL' || l.accountCode === selectedLedgerCode)
+                      .map((l: any) => [
+                        l.date ? new Date(l.date).toISOString().slice(0, 10) : '',
+                        l.entryNumber,
+                        `${l.accountCode} - ${lang === 'ku' ? l.accountNameKu : lang === 'ar' ? l.accountNameAr : l.accountNameEn}`,
+                        l.debitIqd || 0,
+                        l.creditIqd || 0,
+                        l.runningBalanceIqd || 0,
+                      ])
+                  )
+                }
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold"
+              >
+                <Download className="w-3.5 h-3.5" /> Excel
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -720,13 +795,13 @@ export function AccountingEngineModuleView({
                 {generalLedger
                   .filter((l: any) => selectedLedgerCode === 'ALL' || l.accountCode === selectedLedgerCode)
                   .map((l: any) => (
-                    <tr key={l.lineId}>
+                    <tr key={l.lineId} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
                       <td className="py-2 px-4 text-slate-500">{l.date ? new Date(l.date).toLocaleDateString() : '—'}</td>
                       <td className="py-2 px-4 font-mono text-emerald-500">{l.entryNumber}</td>
                       <td className="py-2 px-4 font-semibold">{l.accountCode} — {lang === 'ku' ? l.accountNameKu : lang === 'ar' ? l.accountNameAr : l.accountNameEn}</td>
-                      <td className="py-2 px-4 text-end font-mono">{l.debitIqd > 0 ? fmtIqd(l.debitIqd, lang) : '—'}</td>
-                      <td className="py-2 px-4 text-end font-mono">{l.creditIqd > 0 ? fmtIqd(l.creditIqd, lang) : '—'}</td>
-                      <td className="py-2 px-4 text-end font-mono font-bold">{fmtIqd(l.runningBalanceIqd, lang)}</td>
+                      <td className="py-2 px-4 text-end tabular-nums">{l.debitIqd > 0 ? fmtIqd(l.debitIqd, lang) : '—'}</td>
+                      <td className="py-2 px-4 text-end tabular-nums">{l.creditIqd > 0 ? fmtIqd(l.creditIqd, lang) : '—'}</td>
+                      <td className="py-2 px-4 text-end tabular-nums font-bold">{fmtIqd(l.runningBalanceIqd, lang)}</td>
                     </tr>
                   ))}
               </tbody>
@@ -737,26 +812,28 @@ export function AccountingEngineModuleView({
 
       {tab === 'COA' && (
         <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 overflow-hidden">
-          <table className="w-full text-xs">
-            <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500">
-              <tr>
-                <th className="py-3 px-4 text-start">{lblCode}</th>
-                <th className="py-3 px-4 text-start">{lblAccount}</th>
-                <th className="py-3 px-4 text-center">{lang === 'ku' ? 'جۆر' : lang === 'ar' ? 'النوع' : 'Type'}</th>
-                <th className="py-3 px-4 text-end">{lblBalance}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-              {accounts.map((acc: any) => (
-                <tr key={acc.id}>
-                  <td className="py-2.5 px-4 font-mono font-bold text-emerald-500">{acc.code}</td>
-                  <td className="py-2.5 px-4 font-semibold">{locName(acc, lang)}</td>
-                  <td className="py-2.5 px-4 text-center font-mono text-[10px]">{acc.type}</td>
-                  <td className="py-2.5 px-4 text-end font-bold">{fmtIqd(acc.balanceIqd, lang)}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500">
+                <tr>
+                  <th className="py-3 px-4 text-start">{lblCode}</th>
+                  <th className="py-3 px-4 text-start">{lblAccount}</th>
+                  <th className="py-3 px-4 text-center">{lang === 'ku' ? 'جۆر' : lang === 'ar' ? 'النوع' : 'Type'}</th>
+                  <th className="py-3 px-4 text-end">{lblBalance}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
+                {accounts.map((acc: any) => (
+                  <tr key={acc.id} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
+                    <td className="py-2.5 px-4 font-mono font-bold text-emerald-500">{acc.code}</td>
+                    <td className="py-2.5 px-4 font-semibold">{locName(acc, lang)}</td>
+                    <td className="py-2.5 px-4 text-center">{accountTypeBadge(acc.type)}</td>
+                    <td className="py-2.5 px-4 text-end tabular-nums font-bold">{fmtIqd(acc.balanceIqd, lang)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -764,19 +841,26 @@ export function AccountingEngineModuleView({
         <form onSubmit={handlePostManual} className="bg-white dark:bg-charcoal-900 p-6 rounded-2xl border border-slate-200 dark:border-charcoal-800 space-y-4">
           <input type="text" required placeholder={t.description} value={jrnDesc} onChange={(e) => setJrnDesc(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
           {jrnLines.map((line, idx) => (
-            <div key={idx} className="grid grid-cols-12 gap-2">
-              <select value={line.accountId} onChange={(e) => { const c = [...jrnLines]; c[idx].accountId = e.target.value; setJrnLines(c); }} className="col-span-6 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs">
+            <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+              <select value={line.accountId || accounts[idx]?.id || accounts[0]?.id || ''} onChange={(e) => { const c = [...jrnLines]; c[idx].accountId = e.target.value; setJrnLines(c); }} className="col-span-5 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-semibold">
                 {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.code} — {locName(a, lang)}</option>)}
               </select>
-              <input type="number" min="0" placeholder={t.accounting.debit} value={line.debitIqd} onChange={(e) => { const c = [...jrnLines]; c[idx].debitIqd = e.target.value; if (Number(e.target.value) > 0) c[idx].creditIqd = '0'; setJrnLines(c); }} className="col-span-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs text-end font-mono" />
-              <input type="number" min="0" placeholder={t.accounting.credit} value={line.creditIqd} onChange={(e) => { const c = [...jrnLines]; c[idx].creditIqd = e.target.value; if (Number(e.target.value) > 0) c[idx].debitIqd = '0'; setJrnLines(c); }} className="col-span-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs text-end font-mono" />
+              <input type="number" min="0" placeholder={t.accounting.debit} value={line.debitIqd} onChange={(e) => { const c = [...jrnLines]; c[idx].debitIqd = e.target.value; if (Number(e.target.value) > 0) c[idx].creditIqd = '0'; setJrnLines(c); }} className="col-span-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs text-end tabular-nums font-bold" />
+              <input type="number" min="0" placeholder={t.accounting.credit} value={line.creditIqd} onChange={(e) => { const c = [...jrnLines]; c[idx].creditIqd = e.target.value; if (Number(e.target.value) > 0) c[idx].debitIqd = '0'; setJrnLines(c); }} className="col-span-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs text-end tabular-nums font-bold" />
+              <div className="col-span-1 text-center">
+                {jrnLines.length > 2 && (
+                  <button type="button" onClick={() => setJrnLines(jrnLines.filter((_, i) => i !== idx))} className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
             <button type="button" onClick={() => setJrnLines([...jrnLines, { accountId: accounts[0]?.id || '', debitIqd: '0', creditIqd: '0' }])} className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 font-bold">
               + {lang === 'ku' ? 'ڕیزی نوێ' : lang === 'ar' ? 'سطر جديد' : 'Add Line'}
             </button>
-            <div className="flex items-center gap-3 font-mono font-bold">
+            <div className="flex items-center gap-3 tabular-nums font-bold">
               <span>{t.accounting.debit}: {fmtIqd(manualTotals.debit, lang)}</span>
               <span>{t.accounting.credit}: {fmtIqd(manualTotals.credit, lang)}</span>
               <span className={manualTotals.isBalanced ? 'text-emerald-500' : 'text-rose-500'}>
