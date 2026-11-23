@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Users,
   Building2,
@@ -59,6 +59,14 @@ export function PartiesAndDebtModuleView({
   const [showSettlementModal, setShowSettlementModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [idemKey, setIdemKey] = useState(() => makeIdempotencyKey('debt'));
+
+  useEffect(() => {
+    setTab('LIST');
+    setSearch('');
+    setOnlyDebtors(false);
+    setShowPartyModal(false);
+    setShowSettlementModal(false);
+  }, [mode]);
 
   const customers = partiesData?.customers || [];
   const suppliers = partiesData?.suppliers || [];
