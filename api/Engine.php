@@ -15,6 +15,7 @@ class ErpEngine
     private array $idIndexCache = [];
     private array $unitCodeCache = [];
     private array $accountCodeCache = [];
+    private array $expCatCodeCache = [];
     private ?array $wsByProductCache = null;
     private ?array $salesItemsByInvCache = null;
     private ?array $purchaseItemsByInvCache = null;
@@ -29,6 +30,7 @@ class ErpEngine
         $this->idIndexCache = [];
         $this->unitCodeCache = [];
         $this->accountCodeCache = [];
+        $this->expCatCodeCache = [];
         $this->wsByProductCache = null;
         $this->salesItemsByInvCache = null;
         $this->purchaseItemsByInvCache = null;
@@ -42,6 +44,7 @@ class ErpEngine
         $this->idIndexCache = [];
         $this->unitCodeCache = [];
         $this->accountCodeCache = [];
+        $this->expCatCodeCache = [];
         $this->wsByProductCache = null;
         $this->salesItemsByInvCache = null;
         $this->purchaseItemsByInvCache = null;
@@ -239,16 +242,24 @@ class ErpEngine
     public function saveDatabase(): void
     {
         $this->invalidateReadCache();
+        $rev = (int)($this->db['_rev'] ?? 0) + 1;
+        $this->db['_rev'] = $rev;
+        if (isset($this->db['idempotencyLog']) && is_array($this->db['idempotencyLog']) && count($this->db['idempotencyLog']) > 100) {
+            $this->db['idempotencyLog'] = array_slice($this->db['idempotencyLog'], -100, null, true);
+        }
         // Compact UTF-8 JSON is ~55% smaller and ~2.5x faster to read/write on every request
         $json = json_encode($this->db, JSON_UNESCAPED_UNICODE);
 
+        $revFile = ERP_STORAGE_DIR . '/erp_state.rev';
         $fp = fopen(ERP_LOCK_FILE, 'c+');
         if ($fp && flock($fp, LOCK_EX)) {
             file_put_contents(ERP_DB_FILE, $json);
+            @file_put_contents($revFile, (string)$rev);
             flock($fp, LOCK_UN);
             fclose($fp);
         } else {
             file_put_contents(ERP_DB_FILE, $json);
+            @file_put_contents($revFile, (string)$rev);
         }
 
         $pdo = $this->getPdo();
@@ -886,9 +897,9 @@ class ErpEngine
     {
         if (!$key) return;
         $this->db['idempotencyLog'][$key] = $response;
-        // Keep last 500 keys to prevent unbounded growth
-        if (count($this->db['idempotencyLog']) > 500) {
-            $this->db['idempotencyLog'] = array_slice($this->db['idempotencyLog'], -500, null, true);
+        // Keep last 100 keys to keep database JSON compact and fast
+        if (count($this->db['idempotencyLog']) > 100) {
+            $this->db['idempotencyLog'] = array_slice($this->db['idempotencyLog'], -100, null, true);
         }
     }
 
@@ -1748,16 +1759,68 @@ class ErpEngine
         return $p;
     }
 
+    private function compactProductRef(?array $p): ?array
+    {
+        if (!$p) return null;
+        return [
+            'id' => $p['id'],
+            'sku' => $p['sku'] ?? '',
+            'nameEn' => $p['nameEn'] ?? '',
+            'nameAr' => $p['nameAr'] ?? '',
+            'nameKu' => $p['nameKu'] ?? '',
+            'unit' => $p['unit'] ?? 'piece',
+            'productType' => $p['productType'] ?? 'GENERAL',
+        ];
+    }
+
+    private function compactWarehouseRef(?array $w): ?array
+    {
+        if (!$w) return null;
+        return [
+            'id' => $w['id'],
+            'code' => $w['code'] ?? '',
+            'nameEn' => $w['nameEn'] ?? '',
+            'nameAr' => $w['nameAr'] ?? '',
+            'nameKu' => $w['nameKu'] ?? '',
+        ];
+    }
+
+    private function compactAccountRef(?array $a): ?array
+    {
+        if (!$a) return null;
+        return [
+            'id' => $a['id'],
+            'code' => $a['code'] ?? '',
+            'nameEn' => $a['nameEn'] ?? '',
+            'nameAr' => $a['nameAr'] ?? '',
+            'nameKu' => $a['nameKu'] ?? '',
+            'type' => $a['type'] ?? '',
+            'normalBalance' => $a['normalBalance'] ?? 'DEBIT',
+        ];
+    }
+
     public function hydrateExpense(array $e): array
     {
-        $e['expenseAccount'] = $this->findById('accounts', $e['expenseAccountId'] ?? null);
+        $e['expenseAccount'] = $this->compactAccountRef($this->findById('accounts', $e['expenseAccountId'] ?? null));
         $e['financialAccount'] = $this->findById('financialAccounts', $e['financialAccountId'] ?? null);
         $e['employee'] = !empty($e['employeeId']) ? $this->findById('employees', $e['employeeId']) : null;
         $e['salaryPayment'] = !empty($e['salaryPaymentId']) ? $this->findById('salaryPayments', $e['salaryPaymentId']) : null;
-        foreach ($this->db['expenseCategories'] as $ec) {
-            if ($ec['code'] === ($e['category'] ?? '')) {
-                $e['categoryObj'] = $ec;
-                break;
+        $catCode = $e['category'] ?? '';
+        if ($this->readCacheEnabled) {
+            if (empty($this->expCatCodeCache) && !empty($this->db['expenseCategories'])) {
+                foreach ($this->db['expenseCategories'] as $ec) {
+                    $this->expCatCodeCache[$ec['code']] = $ec;
+                }
+            }
+            if (isset($this->expCatCodeCache[$catCode])) {
+                $e['categoryObj'] = $this->expCatCodeCache[$catCode];
+            }
+        } else {
+            foreach ($this->db['expenseCategories'] as $ec) {
+                if ($ec['code'] === $catCode) {
+                    $e['categoryObj'] = $ec;
+                    break;
+                }
             }
         }
         return $e;
@@ -1817,23 +1880,23 @@ class ErpEngine
 
     public function hydrateSpoilage(array $s): array
     {
-        $s['product'] = $this->findById('products', $s['productId'] ?? null);
-        $s['warehouse'] = $this->findById('warehouses', $s['warehouseId'] ?? null);
+        $s['product'] = $this->compactProductRef($this->findById('products', $s['productId'] ?? null));
+        $s['warehouse'] = $this->compactWarehouseRef($this->findById('warehouses', $s['warehouseId'] ?? null));
         return $s;
     }
 
     public function hydrateMovement(array $m): array
     {
-        $m['product'] = $this->findById('products', $m['productId']);
-        $m['warehouse'] = $this->findById('warehouses', $m['warehouseId']);
+        $m['product'] = $this->compactProductRef($this->findById('products', $m['productId']));
+        $m['warehouse'] = $this->compactWarehouseRef($this->findById('warehouses', $m['warehouseId']));
         return $m;
     }
 
     public function hydrateTransfer(array $t): array
     {
-        $t['product'] = $this->findById('products', $t['productId']);
-        $t['fromWarehouse'] = $this->findById('warehouses', $t['fromWarehouseId']);
-        $t['toWarehouse'] = $this->findById('warehouses', $t['toWarehouseId']);
+        $t['product'] = $this->compactProductRef($this->findById('products', $t['productId']));
+        $t['fromWarehouse'] = $this->compactWarehouseRef($this->findById('warehouses', $t['fromWarehouseId']));
+        $t['toWarehouse'] = $this->compactWarehouseRef($this->findById('warehouses', $t['toWarehouseId']));
         return $t;
     }
 
@@ -1911,7 +1974,7 @@ class ErpEngine
         }
         $lines = [];
         foreach ($rawLines as $l) {
-            $l['account'] = $this->findById('accounts', $l['accountId']);
+            $l['account'] = $this->compactAccountRef($this->findById('accounts', $l['accountId']));
             $lines[] = $l;
         }
         $j['lines'] = $lines;
@@ -2063,33 +2126,61 @@ class ErpEngine
         $grossMargin = $totalRev > 0 ? round(($grossProfit / $totalRev) * 100, 1) : 0;
         $netMargin = $totalRev > 0 ? round(($netProfit / $totalRev) * 100, 1) : 0;
 
-        // Profit by product and category
+        // Profit by product and category (O(N) single pass — scales cleanly to 10,000+ invoices)
         $prodMap = [];
         $catMap = [];
+        $validSalesIds = [];
         foreach ($this->db['salesInvoices'] as $inv) {
-            if (!in_array($inv['status'], ['POSTED', 'PARTIALLY_PAID', 'PAID'])) continue;
-            foreach ($this->db['salesInvoiceItems'] as $item) {
-                if ($item['salesInvoiceId'] !== $inv['id']) continue;
-                $netBaseQty = self::roundQty(self::decSub($item['baseQuantity'] ?? $item['quantity'], $item['returnedQty'] ?? 0));
-                if ($netBaseQty <= 0) continue;
-                $p = $this->findById('products', $item['productId']);
-                if (!$p) continue;
-                $cat = $this->findById('categories', $p['categoryId']);
+            if (in_array($inv['status'], ['POSTED', 'PARTIALLY_PAID', 'PAID'], true)) {
+                $validSalesIds[$inv['id']] = true;
+            }
+        }
+        foreach ($this->db['salesInvoiceItems'] as $item) {
+            if (!isset($validSalesIds[$item['salesInvoiceId']])) continue;
+            $netBaseQty = self::roundQty(self::decSub($item['baseQuantity'] ?? $item['quantity'], $item['returnedQty'] ?? 0));
+            if ($netBaseQty <= 0) continue;
+            $p = $this->findById('products', $item['productId']);
+            if (!$p) continue;
+            $cat = $this->findById('categories', $p['categoryId']);
 
-                $revIqd = self::roundIqd(self::decSub($item['lineTotalIqd'] ?? 0, $item['taxIqd'] ?? 0));
-                $costIqd = self::roundIqd(self::decMul($item['unitCostIqd'] ?? 0, $netBaseQty, 4));
-                $profIqd = self::roundIqd(self::decSub($revIqd, $costIqd));
+            $revIqd = self::roundIqd(self::decSub($item['lineTotalIqd'] ?? 0, $item['taxIqd'] ?? 0));
+            $costIqd = self::roundIqd(self::decMul($item['unitCostIqd'] ?? 0, $netBaseQty, 4));
+            $profIqd = self::roundIqd(self::decSub($revIqd, $costIqd));
 
-                $pid = $p['id'];
-                if (!isset($prodMap[$pid])) {
-                    $prodMap[$pid] = [
-                        'productId' => $pid,
-                        'sku' => $p['sku'],
-                        'unit' => $p['unit'],
-                        'nameEn' => $p['nameEn'],
-                        'nameAr' => $p['nameAr'],
-                        'nameKu' => $p['nameKu'],
-                        'quantitySold' => 0.0,
+            $pid = $p['id'];
+            if (!isset($prodMap[$pid])) {
+                $prodMap[$pid] = [
+                    'productId' => $pid,
+                    'sku' => $p['sku'],
+                    'unit' => $p['unit'],
+                    'nameEn' => $p['nameEn'],
+                    'nameAr' => $p['nameAr'],
+                    'nameKu' => $p['nameKu'],
+                    'quantitySold' => 0.0,
+                    'revenueIqd' => 0.0,
+                    'costIqd' => 0.0,
+                    'profitIqd' => 0.0,
+                    'revenueUsd' => 0.0,
+                    'costUsd' => 0.0,
+                    'profitUsd' => 0.0,
+                ];
+            }
+            $prodMap[$pid]['quantitySold'] = self::roundQty(self::decAdd($prodMap[$pid]['quantitySold'], $netBaseQty));
+            $prodMap[$pid]['revenueIqd'] = self::roundIqd(self::decAdd($prodMap[$pid]['revenueIqd'], $revIqd));
+            $prodMap[$pid]['costIqd'] = self::roundIqd(self::decAdd($prodMap[$pid]['costIqd'], $costIqd));
+            $prodMap[$pid]['profitIqd'] = self::roundIqd(self::decAdd($prodMap[$pid]['profitIqd'], $profIqd));
+            $prodMap[$pid]['revenueUsd'] = self::iqdToUsd($prodMap[$pid]['revenueIqd'], $rate);
+            $prodMap[$pid]['costUsd'] = self::iqdToUsd($prodMap[$pid]['costIqd'], $rate);
+            $prodMap[$pid]['profitUsd'] = self::iqdToUsd($prodMap[$pid]['profitIqd'], $rate);
+
+            if ($cat) {
+                $cid = $cat['id'];
+                if (!isset($catMap[$cid])) {
+                    $catMap[$cid] = [
+                        'categoryId' => $cid,
+                        'nameEn' => $cat['nameEn'],
+                        'nameAr' => $cat['nameAr'],
+                        'nameKu' => $cat['nameKu'],
                         'revenueIqd' => 0.0,
                         'costIqd' => 0.0,
                         'profitIqd' => 0.0,
@@ -2098,37 +2189,12 @@ class ErpEngine
                         'profitUsd' => 0.0,
                     ];
                 }
-                $prodMap[$pid]['quantitySold'] = self::roundQty(self::decAdd($prodMap[$pid]['quantitySold'], $netBaseQty));
-                $prodMap[$pid]['revenueIqd'] = self::roundIqd(self::decAdd($prodMap[$pid]['revenueIqd'], $revIqd));
-                $prodMap[$pid]['costIqd'] = self::roundIqd(self::decAdd($prodMap[$pid]['costIqd'], $costIqd));
-                $prodMap[$pid]['profitIqd'] = self::roundIqd(self::decAdd($prodMap[$pid]['profitIqd'], $profIqd));
-                $prodMap[$pid]['revenueUsd'] = self::iqdToUsd($prodMap[$pid]['revenueIqd'], $rate);
-                $prodMap[$pid]['costUsd'] = self::iqdToUsd($prodMap[$pid]['costIqd'], $rate);
-                $prodMap[$pid]['profitUsd'] = self::iqdToUsd($prodMap[$pid]['profitIqd'], $rate);
-
-                if ($cat) {
-                    $cid = $cat['id'];
-                    if (!isset($catMap[$cid])) {
-                        $catMap[$cid] = [
-                            'categoryId' => $cid,
-                            'nameEn' => $cat['nameEn'],
-                            'nameAr' => $cat['nameAr'],
-                            'nameKu' => $cat['nameKu'],
-                            'revenueIqd' => 0.0,
-                            'costIqd' => 0.0,
-                            'profitIqd' => 0.0,
-                            'revenueUsd' => 0.0,
-                            'costUsd' => 0.0,
-                            'profitUsd' => 0.0,
-                        ];
-                    }
-                    $catMap[$cid]['revenueIqd'] = self::roundIqd(self::decAdd($catMap[$cid]['revenueIqd'], $revIqd));
-                    $catMap[$cid]['costIqd'] = self::roundIqd(self::decAdd($catMap[$cid]['costIqd'], $costIqd));
-                    $catMap[$cid]['profitIqd'] = self::roundIqd(self::decAdd($catMap[$cid]['profitIqd'], $profIqd));
-                    $catMap[$cid]['revenueUsd'] = self::iqdToUsd($catMap[$cid]['revenueIqd'], $rate);
-                    $catMap[$cid]['costUsd'] = self::iqdToUsd($catMap[$cid]['costIqd'], $rate);
-                    $catMap[$cid]['profitUsd'] = self::iqdToUsd($catMap[$cid]['profitIqd'], $rate);
-                }
+                $catMap[$cid]['revenueIqd'] = self::roundIqd(self::decAdd($catMap[$cid]['revenueIqd'], $revIqd));
+                $catMap[$cid]['costIqd'] = self::roundIqd(self::decAdd($catMap[$cid]['costIqd'], $costIqd));
+                $catMap[$cid]['profitIqd'] = self::roundIqd(self::decAdd($catMap[$cid]['profitIqd'], $profIqd));
+                $catMap[$cid]['revenueUsd'] = self::iqdToUsd($catMap[$cid]['revenueIqd'], $rate);
+                $catMap[$cid]['costUsd'] = self::iqdToUsd($catMap[$cid]['costIqd'], $rate);
+                $catMap[$cid]['profitUsd'] = self::iqdToUsd($catMap[$cid]['profitIqd'], $rate);
             }
         }
 

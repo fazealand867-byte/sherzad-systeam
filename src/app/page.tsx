@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -48,15 +49,62 @@ import {
 } from '@/lib/i18n';
 import { fmtIqd, fmtQty, locName } from '@/lib/client-utils';
 import { unitLabel } from '@/lib/units';
-import { PrintModal, PrintableDocument } from '@/components/PrintModal';
-import { SalesModuleView, PurchasesModuleView } from '@/components/SalesPurchasesViews';
-import { ProductsInventoryView } from '@/components/ProductsInventoryView';
-import { ProductionModuleView } from '@/components/ProductionModuleView';
-import { ExpensesModuleView } from '@/components/ExpensesView';
-import { EmployeesPayrollView } from '@/components/EmployeesPayrollView';
-import { PartiesAndDebtModuleView } from '@/components/InventoryPartiesViews';
-import { CashBankModuleView, AccountingEngineModuleView } from '@/components/FinanceAccountingViews';
-import { ReportsModuleView, SettingsModuleView } from '@/components/ReportsSettingsViews';
+import type { PrintableDocument } from '@/components/PrintModal';
+
+const ModuleLoadingFallback = () => (
+  <div className="p-10 flex items-center justify-center">
+    <div className="w-7 h-7 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+  </div>
+);
+
+const PrintModal = dynamic(
+  () => import('@/components/PrintModal').then((m) => m.PrintModal),
+  { ssr: false }
+);
+const SalesModuleView = dynamic(
+  () => import('@/components/SalesPurchasesViews').then((m) => m.SalesModuleView),
+  { loading: ModuleLoadingFallback }
+);
+const PurchasesModuleView = dynamic(
+  () => import('@/components/SalesPurchasesViews').then((m) => m.PurchasesModuleView),
+  { loading: ModuleLoadingFallback }
+);
+const ProductsInventoryView = dynamic(
+  () => import('@/components/ProductsInventoryView').then((m) => m.ProductsInventoryView),
+  { loading: ModuleLoadingFallback }
+);
+const ProductionModuleView = dynamic(
+  () => import('@/components/ProductionModuleView').then((m) => m.ProductionModuleView),
+  { loading: ModuleLoadingFallback }
+);
+const ExpensesModuleView = dynamic(
+  () => import('@/components/ExpensesView').then((m) => m.ExpensesModuleView),
+  { loading: ModuleLoadingFallback }
+);
+const EmployeesPayrollView = dynamic(
+  () => import('@/components/EmployeesPayrollView').then((m) => m.EmployeesPayrollView),
+  { loading: ModuleLoadingFallback }
+);
+const PartiesAndDebtModuleView = dynamic(
+  () => import('@/components/InventoryPartiesViews').then((m) => m.PartiesAndDebtModuleView),
+  { loading: ModuleLoadingFallback }
+);
+const CashBankModuleView = dynamic(
+  () => import('@/components/FinanceAccountingViews').then((m) => m.CashBankModuleView),
+  { loading: ModuleLoadingFallback }
+);
+const AccountingEngineModuleView = dynamic(
+  () => import('@/components/FinanceAccountingViews').then((m) => m.AccountingEngineModuleView),
+  { loading: ModuleLoadingFallback }
+);
+const ReportsModuleView = dynamic(
+  () => import('@/components/ReportsSettingsViews').then((m) => m.ReportsModuleView),
+  { loading: ModuleLoadingFallback }
+);
+const SettingsModuleView = dynamic(
+  () => import('@/components/ReportsSettingsViews').then((m) => m.SettingsModuleView),
+  { loading: ModuleLoadingFallback }
+);
 
 type ModuleKey =
   | 'dashboard'
@@ -96,6 +144,7 @@ export default function SherzadFoodFactoryApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Quick-action triggers from Dashboard
   const [expenseQuickMode, setExpenseQuickMode] = useState<'NORMAL' | 'SALARY' | null>(null);
@@ -144,6 +193,9 @@ export default function SherzadFoodFactoryApp() {
   useEffect(() => {
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
+    try {
+      localStorage.setItem('sherzad_erp_theme_v2', darkMode ? 'dark' : 'light');
+    } catch {}
   }, [darkMode]);
 
   useEffect(() => {
@@ -161,8 +213,9 @@ export default function SherzadFoodFactoryApp() {
   }, []);
 
   const loadAllSystemData = useCallback(async () => {
+    setRefreshing(true);
     try {
-      // Single-request ultra-fast snapshot (replaces 12 parallel PHP calls with 1!)
+      // Single-request ultra-fast snapshot (replaces 12 parallel PHP calls with 1 + ETag 304!)
       const snapRes = await fetch('/api/snapshot');
       if (snapRes.ok) {
         const snap = await snapRes.json();
@@ -191,14 +244,20 @@ export default function SherzadFoodFactoryApp() {
       console.error('Failed to load system data:', err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    const savedLang = localStorage.getItem('sherzad_erp_lang_v2') as LanguageCode | null;
-    if (savedLang && ['ku', 'ar', 'en'].includes(savedLang)) {
-      setLang(savedLang);
-    }
+    try {
+      const savedLang = localStorage.getItem('sherzad_erp_lang_v2') as LanguageCode | null;
+      if (savedLang && ['ku', 'ar', 'en'].includes(savedLang)) {
+        setLang(savedLang);
+      }
+      const savedTheme = localStorage.getItem('sherzad_erp_theme_v2');
+      if (savedTheme === 'light') setDarkMode(false);
+      else if (savedTheme === 'dark') setDarkMode(true);
+    } catch {}
     loadAllSystemData();
   }, [loadAllSystemData]);
 
@@ -210,17 +269,21 @@ export default function SherzadFoodFactoryApp() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'login', identifier: loginIdentifier, password: loginPassword }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      notify('success', `${data.user.name} ✓`);
-      setShowLoginModal(false);
-      await loadAllSystemData();
-    } else notify('error', data.error || 'Invalid credentials');
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login', identifier: loginIdentifier, password: loginPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        notify('success', `${data.user.name} ✓`);
+        setShowLoginModal(false);
+        await loadAllSystemData();
+      } else notify('error', data.error || 'Invalid credentials');
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
+    }
   };
 
   const globalSearchResults = useMemo(() => {
@@ -479,7 +542,7 @@ export default function SherzadFoodFactoryApp() {
           {NAV_GROUPS.map((group, gIdx) => (
             <div key={gIdx} className="space-y-1">
               {!sidebarCollapsed && (
-                <div className="px-3 text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                <div className={`px-3 text-[11px] font-bold text-slate-500 ${lang === 'en' ? 'uppercase tracking-wide' : ''}`}>
                   {group.label}
                 </div>
               )}
@@ -619,7 +682,7 @@ export default function SherzadFoodFactoryApp() {
             </button>
 
             <button onClick={loadAllSystemData} title={t.refresh} className="p-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800">
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-500' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${loading || refreshing ? 'animate-spin text-emerald-500' : ''}`} />
             </button>
           </div>
         </header>

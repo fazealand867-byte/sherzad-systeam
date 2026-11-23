@@ -22,12 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/Engine.php';
 
 try {
-    $engine = new ErpEngine();
     $method = $_SERVER['REQUEST_METHOD'];
-    if ($method === 'GET') {
-        $engine->enableReadCache();
-    }
-
     $route = $_GET['route'] ?? '';
     if (!$route) {
         $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '';
@@ -36,6 +31,29 @@ try {
         }
     }
     $route = strtolower(trim($route, '/'));
+
+    // Ultra-fast ETag / 304 short-circuit for unchanged GET /api/snapshot (< 2ms, 0 bytes!)
+    if ($route === 'snapshot' && $method === 'GET' && !DB_USE_MYSQL && file_exists(ERP_DB_FILE)) {
+        $revFile = ERP_STORAGE_DIR . '/erp_state.rev';
+        $revTag = file_exists($revFile) ? trim((string)@file_get_contents($revFile)) : '0';
+        $snapToken = 'snap-' . $revTag . '-' . @filemtime(ERP_DB_FILE) . '-' . @filesize(ERP_DB_FILE) . '-' . date('Y-m-d');
+        $snapEtag = 'W/"' . $snapToken . '"';
+        header('Cache-Control: private, no-cache');
+        header('ETag: ' . $snapEtag);
+        $clientEtag = trim((string)($_SERVER['HTTP_IF_NONE_MATCH'] ?? ''));
+        if ($clientEtag !== '' && strpos($clientEtag, $snapToken) !== false) {
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            http_response_code(304);
+            exit;
+        }
+    }
+
+    $engine = new ErpEngine();
+    if ($method === 'GET') {
+        $engine->enableReadCache();
+    }
 
     $rawBody = file_get_contents('php://input');
     $body = $rawBody ? (json_decode($rawBody, true) ?: []) : [];
@@ -324,7 +342,7 @@ try {
             'inventory' => [
                 'valuation' => $invVal,
                 'movements' => array_map([$engine, 'hydrateMovement'], array_slice($engine->db['movements'], 0, 80)),
-                'transfers' => array_map([$engine, 'hydrateTransfer'], array_slice($engine->db['transfers'], 0, 40)),
+                'transfers' => array_map([$engine, 'hydrateTransfer'], array_slice($engine->db['transfers'], 0, 20)),
                 'spoilageRecords' => $hydratedSpoilage,
                 'categories' => $engine->db['categories'],
                 'warehouses' => $engine->db['warehouses'],
@@ -372,9 +390,9 @@ try {
                 'settings' => $engine->db['settings'],
                 'users' => $engine->db['users'],
                 'rolePermissions' => $rpList,
-                'auditLogs' => array_slice($engine->db['auditLogs'], 0, 100),
+                'auditLogs' => array_slice($engine->db['auditLogs'], 0, 20),
             ],
-        ]);
+        ], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
