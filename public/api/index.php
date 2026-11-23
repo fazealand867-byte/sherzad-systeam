@@ -2592,6 +2592,7 @@ try {
             if (!empty($_GET['statementCustomerId'])) {
                 $cid = $_GET['statementCustomerId'];
                 $cust = $engine->findById('customers', $cid);
+                if (!$cust) throw new Exception('Customer not found.');
                 $events = [];
                 $openIqd = (float)($cust['openingBalanceIqd'] ?? 0);
                 if ($openIqd > 0) {
@@ -2640,6 +2641,7 @@ try {
             if (!empty($_GET['statementSupplierId'])) {
                 $sid = $_GET['statementSupplierId'];
                 $supp = $engine->findById('suppliers', $sid);
+                if (!$supp) throw new Exception('Supplier not found.');
                 $events = [];
                 $openIqd = (float)($supp['openingBalanceIqd'] ?? 0);
                 if ($openIqd > 0) {
@@ -2787,6 +2789,38 @@ try {
             $engine->saveDatabase();
             echo json_encode(['supplier' => $s]);
             exit;
+        }
+
+        if ($action === 'updateCustomer') {
+            $cid = $body['customerId'] ?? '';
+            foreach ($engine->db['customers'] as &$c) {
+                if ($c['id'] === $cid) {
+                    if (isset($body['name']) && trim($body['name']) !== '') $c['name'] = trim($body['name']);
+                    if (array_key_exists('phone', $body)) $c['phone'] = trim((string)$body['phone']);
+                    if (array_key_exists('city', $body)) $c['city'] = trim((string)$body['city']) ?: 'هەولێر';
+                    $engine->logAudit('CUSTOMER_UPDATED', 'PARTIES', 'Customer', $cid, "Updated customer {$c['name']}");
+                    $engine->saveDatabase();
+                    echo json_encode(['customer' => $c]);
+                    exit;
+                }
+            }
+            throw new Exception('Customer not found.');
+        }
+
+        if ($action === 'updateSupplier') {
+            $sid = $body['supplierId'] ?? '';
+            foreach ($engine->db['suppliers'] as &$s) {
+                if ($s['id'] === $sid) {
+                    if (isset($body['name']) && trim($body['name']) !== '') $s['name'] = trim($body['name']);
+                    if (array_key_exists('phone', $body)) $s['phone'] = trim((string)$body['phone']);
+                    if (array_key_exists('city', $body)) $s['city'] = trim((string)$body['city']) ?: 'هەولێر';
+                    $engine->logAudit('SUPPLIER_UPDATED', 'PARTIES', 'Supplier', $sid, "Updated supplier {$s['name']}");
+                    $engine->saveDatabase();
+                    echo json_encode(['supplier' => $s]);
+                    exit;
+                }
+            }
+            throw new Exception('Supplier not found.');
         }
 
         if ($action === 'collectDebt') {

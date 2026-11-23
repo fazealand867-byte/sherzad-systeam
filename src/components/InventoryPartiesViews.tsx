@@ -9,6 +9,13 @@ import {
   Download,
   FileSpreadsheet,
   Search,
+  Edit3,
+  Phone,
+  MapPin,
+  CheckCircle2,
+  XCircle,
+  Receipt,
+  History,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import {
@@ -43,9 +50,11 @@ export function PartiesAndDebtModuleView({
 }: PartiesDebtViewProps) {
   const t = translations[lang];
   const isCustomerSide = mode === 'CUSTOMERS';
+  const [tab, setTab] = useState<'LIST' | 'UNPAID' | 'HISTORY'>('LIST');
   const [search, setSearch] = useState('');
   const [onlyDebtors, setOnlyDebtors] = useState(false);
-  const [showAddParty, setShowAddParty] = useState(false);
+  const [showPartyModal, setShowPartyModal] = useState(false);
+  const [editingPartyId, setEditingPartyId] = useState<string | null>(null);
   const [showSettlementModal, setShowSettlementModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [idemKey, setIdemKey] = useState(() => makeIdempotencyKey('debt'));
@@ -64,16 +73,48 @@ export function PartiesAndDebtModuleView({
   const [payDate, setPayDate] = useState(todayDateStr());
   const [payNotes, setPayNotes] = useState('');
 
-  // New Party Form (Simple!)
+  // Add / Edit Party Form
   const [partyName, setPartyName] = useState('');
   const [partyPhone, setPartyPhone] = useState('');
   const [partyCity, setPartyCity] = useState('هەولێر');
   const [partyOpeningBalIqd, setPartyOpeningBalIqd] = useState('0');
 
   const rawList = isCustomerSide ? customers : suppliers;
+  const openInvoices = isCustomerSide ? unpaidSalesInvoices : unpaidPurchaseInvoices;
+  const sidePayments = useMemo(
+    () =>
+      debtPayments.filter((dp: any) =>
+        isCustomerSide ? dp.type === 'DEBTOR_COLLECTION' : dp.type === 'CREDITOR_PAYMENT'
+      ),
+    [debtPayments, isCustomerSide]
+  );
+
+  const selectedPartyObj = useMemo(
+    () => rawList.find((p: any) => p.id === selectedPartyId) || null,
+    [rawList, selectedPartyId]
+  );
+
+  const openAddParty = () => {
+    setEditingPartyId(null);
+    setPartyName('');
+    setPartyPhone('');
+    setPartyCity('هەولێر');
+    setPartyOpeningBalIqd('0');
+    setShowPartyModal(true);
+  };
+
+  const openEditParty = (p: any) => {
+    setEditingPartyId(p.id);
+    setPartyName(p.name || '');
+    setPartyPhone(p.phone || '');
+    setPartyCity(p.city || 'هەولێر');
+    setPartyOpeningBalIqd('0');
+    setShowPartyModal(true);
+  };
 
   const openSettlementFor = (party?: any, invoice?: any) => {
-    const p = party || rawList[0];
+    const withDebt = rawList.find((x: any) => Number(x.balanceIqd || 0) > 0);
+    const p = party || withDebt || rawList[0];
     setIdemKey(makeIdempotencyKey('debt'));
     setSelectedPartyId(p?.id || '');
     setSelectedInvoiceId(invoice?.id || '');
@@ -89,7 +130,10 @@ export function PartiesAndDebtModuleView({
 
   const handleRecordSettlement = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPartyId || Number(payAmountIqd) <= 0) return;
+    if (!selectedPartyId || Number(payAmountIqd) <= 0) {
+      notify('error', lang === 'ku' ? 'تکایە بڕی پارە بە دروستی بنووسە' : 'Please enter a valid amount');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch('/api/parties', {
@@ -103,7 +147,7 @@ export function PartiesAndDebtModuleView({
           financialAccountId: finAccId || financialAccounts[0]?.id,
           amountIqd: Number(payAmountIqd),
           date: payDate,
-          notes: payNotes,
+          notes: payNotes.trim() || undefined,
           idempotencyKey: idemKey,
         }),
       });
@@ -114,12 +158,14 @@ export function PartiesAndDebtModuleView({
         setShowSettlementModal(false);
         await onRefresh();
       }
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleCreateParty = async (e: React.FormEvent) => {
+  const handleSaveParty = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!partyName.trim()) return;
     setSubmitting(true);
@@ -127,37 +173,50 @@ export function PartiesAndDebtModuleView({
       const res = await fetch('/api/parties', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: isCustomerSide ? 'createCustomer' : 'createSupplier',
-          name: partyName.trim(),
-          phone: partyPhone.trim(),
-          city: partyCity.trim(),
-          openingBalanceIqd: Number(partyOpeningBalIqd || 0),
-        }),
+        body: JSON.stringify(
+          editingPartyId
+            ? {
+                action: isCustomerSide ? 'updateCustomer' : 'updateSupplier',
+                ...(isCustomerSide ? { customerId: editingPartyId } : { supplierId: editingPartyId }),
+                name: partyName.trim(),
+                phone: partyPhone.trim(),
+                city: partyCity.trim(),
+              }
+            : {
+                action: isCustomerSide ? 'createCustomer' : 'createSupplier',
+                name: partyName.trim(),
+                phone: partyPhone.trim(),
+                city: partyCity.trim(),
+                openingBalanceIqd: Math.max(0, Number(partyOpeningBalIqd || 0)),
+              }
+        ),
       });
       const data = await res.json();
       if (res.ok) {
         notify('success', `${partyName.trim()} ✓`);
-        setShowAddParty(false);
-        setPartyName('');
-        setPartyPhone('');
-        setPartyOpeningBalIqd('0');
+        setShowPartyModal(false);
         await onRefresh();
       } else notify('error', data.error || 'Could not save');
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleOpenStatement = async (partyId: string) => {
-    const query = isCustomerSide
-      ? `statementCustomerId=${partyId}`
-      : `statementSupplierId=${partyId}`;
-    const res = await fetch(`/api/parties?${query}`);
-    const data = await res.json();
-    if (res.ok && data.statement) {
-      onPrint({ type: 'ACCOUNT_STATEMENT', mode: 'A4', data: data.statement });
-    } else notify('error', data.error || 'Failed to load statement');
+    try {
+      const query = isCustomerSide
+        ? `statementCustomerId=${partyId}`
+        : `statementSupplierId=${partyId}`;
+      const res = await fetch(`/api/parties?${query}`);
+      const data = await res.json();
+      if (res.ok && data.statement) {
+        onPrint({ type: 'ACCOUNT_STATEMENT', mode: 'A4', data: data.statement });
+      } else notify('error', data.error || 'Failed to load statement');
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
+    }
   };
 
   const filteredList = useMemo(
@@ -169,7 +228,8 @@ export function PartiesAndDebtModuleView({
         return (
           (item.name || '').toLowerCase().includes(q) ||
           (item.code || '').toLowerCase().includes(q) ||
-          (item.phone || '').toLowerCase().includes(q)
+          (item.phone || '').toLowerCase().includes(q) ||
+          (item.city || '').toLowerCase().includes(q)
         );
       }),
     [rawList, onlyDebtors, search]
@@ -184,8 +244,16 @@ export function PartiesAndDebtModuleView({
     [rawList]
   );
 
+  const debtorsCount = useMemo(
+    () => rawList.filter((item: any) => Number(item.balanceIqd || 0) > 0).length,
+    [rawList]
+  );
+
+  const partyLabel = isCustomerSide ? t.sales.customer : t.purchases.supplier;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Clean Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm">
         <div>
           <h2 className="text-xl font-black flex items-center gap-2.5 text-slate-900 dark:text-white">
@@ -196,18 +264,18 @@ export function PartiesAndDebtModuleView({
             )}
             {isCustomerSide ? t.parties.customersTitle : t.parties.suppliersTitle}
           </h2>
+          <p className="text-xs text-slate-500 mt-1">
+            {isCustomerSide
+              ? (lang === 'ku' ? 'بەڕێوەبردنی کڕیاران، وەرگرتنەوەی قەرز و کەشف حساب' : lang === 'ar' ? 'إدارة الزبائن، تحصيل الديون وكشف الحساب' : 'Manage customers, debt collections, and account statements')
+              : (lang === 'ku' ? 'بەڕێوەبردنی دابینکەران، دانەوەی قەرز و کەشف حساب' : lang === 'ar' ? 'إدارة الموردين، سداد الديون وكشف الحساب' : 'Manage suppliers, creditor payments, and account statements')}
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs">
-            <span className="text-slate-400 me-1.5">{t.parties.totalDebt}:</span>
-            <span className="font-black text-rose-500 text-sm">{fmtIqd(totalOutstandingIqd, lang)}</span>
-          </div>
-
           {rawList.length > 0 && (
             <button
               onClick={() => openSettlementFor()}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg shadow-emerald-600/20"
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-lg shadow-emerald-600/20 transition"
             >
               <Wallet className="w-4 h-4" />
               {isCustomerSide ? t.parties.collectDebt : t.parties.payDebt}
@@ -215,8 +283,8 @@ export function PartiesAndDebtModuleView({
           )}
 
           <button
-            onClick={() => setShowAddParty(true)}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-bold"
+            onClick={openAddParty}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:bg-slate-200 dark:hover:bg-charcoal-700 text-xs font-bold transition"
           >
             <Plus className="w-4 h-4 text-emerald-500" />
             {isCustomerSide ? t.parties.addCustomer : t.parties.addSupplier}
@@ -224,185 +292,326 @@ export function PartiesAndDebtModuleView({
         </div>
       </div>
 
-      {/* Main Directory Table */}
+      {/* Clickable KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+        <button
+          type="button"
+          onClick={() => {
+            setTab('LIST');
+            setOnlyDebtors(false);
+          }}
+          className={`text-start p-4 rounded-2xl border transition ${
+            tab === 'LIST' && !onlyDebtors
+              ? 'bg-emerald-500/10 border-emerald-500/50'
+              : 'bg-white dark:bg-charcoal-900 border-slate-200 dark:border-charcoal-800 hover:border-emerald-500/40'
+          }`}
+        >
+          <div className="text-xs text-slate-400">
+            {isCustomerSide ? t.parties.customersTitle : t.parties.suppliersTitle}
+          </div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">{rawList.length}</div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setTab('LIST');
+            setOnlyDebtors(true);
+          }}
+          className={`text-start p-4 rounded-2xl border transition ${
+            tab === 'LIST' && onlyDebtors
+              ? 'bg-rose-500/10 border-rose-500/50'
+              : 'bg-white dark:bg-charcoal-900 border-slate-200 dark:border-charcoal-800 hover:border-rose-500/40'
+          }`}
+        >
+          <div className="text-xs text-slate-400">{t.parties.totalDebt}</div>
+          <div className="text-xl font-black text-rose-500 mt-1">{fmtIqd(totalOutstandingIqd, lang)}</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            {debtorsCount} {t.parties.onlyWithDebt}
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setTab('UNPAID')}
+          className={`text-start p-4 rounded-2xl border transition ${
+            tab === 'UNPAID'
+              ? 'bg-amber-500/10 border-amber-500/50'
+              : 'bg-white dark:bg-charcoal-900 border-slate-200 dark:border-charcoal-800 hover:border-amber-500/40'
+          }`}
+        >
+          <div className="text-xs text-slate-400">{t.parties.openInvoices}</div>
+          <div className="text-2xl font-black text-amber-500 mt-1">{openInvoices.length}</div>
+        </button>
+      </div>
+
+      {/* Unified Clean 3-Tab Card */}
       <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex flex-wrap justify-between items-center gap-3">
-          <div className="relative w-full sm:w-80">
-            <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t.searchPlaceholder}
-              className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
-            />
-          </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
-              onClick={() => setOnlyDebtors(false)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold ${!onlyDebtors ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'}`}
+              onClick={() => setTab('LIST')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+                tab === 'LIST' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 dark:bg-charcoal-800'
+              }`}
             >
               {t.parties.allParties} ({rawList.length})
             </button>
             <button
-              onClick={() => setOnlyDebtors(true)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold ${onlyDebtors ? 'bg-amber-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'}`}
+              onClick={() => setTab('UNPAID')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                tab === 'UNPAID' ? 'bg-amber-600 text-white shadow' : 'bg-slate-100 dark:bg-charcoal-800'
+              }`}
             >
-              {t.parties.onlyWithDebt}
+              <Receipt className="w-3.5 h-3.5" />
+              {t.parties.openInvoices} ({openInvoices.length})
             </button>
             <button
-              onClick={() =>
-                exportToCsv(
-                  `${mode.toLowerCase()}-iqd`,
-                  ['Code', 'Name', 'Phone', 'City', 'Balance IQD'],
-                  filteredList.map((p: any) => [p.code, p.name, p.phone, p.city || '', p.balanceIqd])
-                )
-              }
-              className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold flex items-center gap-1"
+              onClick={() => setTab('HISTORY')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                tab === 'HISTORY' ? 'bg-teal-600 text-white shadow' : 'bg-slate-100 dark:bg-charcoal-800'
+              }`}
             >
-              <Download className="w-3.5 h-3.5" /> Excel
+              <History className="w-3.5 h-3.5" />
+              {t.parties.paymentHistory} ({sidePayments.length})
             </button>
           </div>
-        </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
-              <tr>
-                <th className="py-3 px-4 text-start">#</th>
-                <th className="py-3 px-4 text-start">{t.employees.name}</th>
-                <th className="py-3 px-4 text-start">{t.employees.phone}</th>
-                <th className="py-3 px-4 text-end">{t.due}</th>
-                <th className="py-3 px-4 text-center">{t.actions}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-              {filteredList.map((p: any) => {
-                const bal = Number(p.balanceIqd || 0);
-                return (
-                  <tr key={p.id} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
-                    <td className="py-3 px-4 font-mono text-xs font-bold text-emerald-500">{p.code}</td>
-                    <td className="py-3 px-4">
-                      <div className="font-bold text-slate-900 dark:text-white">{p.name}</div>
-                      {p.city && <div className="text-xs text-slate-400">{p.city}</div>}
-                    </td>
-                    <td className="py-3 px-4 font-mono text-xs text-slate-500">{p.phone || '—'}</td>
-                    <td className="py-3 px-4 text-end">
-                      <span className={`font-black ${bal > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                        {fmtIqd(bal, lang)}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-center gap-2">
-                        {bal > 0 && (
-                          <button
-                            onClick={() => openSettlementFor(p)}
-                            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
-                          >
-                            {isCustomerSide ? t.parties.collectDebt : t.parties.payDebt}
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleOpenStatement(p.id)}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold"
-                        >
-                          <FileSpreadsheet className="w-3.5 h-3.5 text-teal-500" />
-                          {t.parties.statement}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Open Invoices & Payment History */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 p-5 space-y-3">
-          <h3 className="text-sm font-black">{t.parties.openInvoices}</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500">
-                <tr>
-                  <th className="py-2 px-3 text-start">#</th>
-                  <th className="py-2 px-3 text-start">{isCustomerSide ? t.sales.customer : t.purchases.supplier}</th>
-                  <th className="py-2 px-3 text-end">{t.due}</th>
-                  <th className="py-2 px-3 text-center">{t.actions}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-                {(isCustomerSide ? unpaidSalesInvoices : unpaidPurchaseInvoices).map((inv: any) => (
-                  <tr key={inv.id}>
-                    <td className="py-2.5 px-3 font-mono font-bold">{inv.invoiceNumber}</td>
-                    <td className="py-2.5 px-3 font-semibold">{inv.customer?.name || inv.supplier?.name}</td>
-                    <td className="py-2.5 px-3 text-end font-bold text-rose-500">{fmtIqd(inv.dueIqd, lang)}</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <button
-                        onClick={() => openSettlementFor(inv.customer || inv.supplier, inv)}
-                        className="px-3 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-bold"
-                      >
-                        {isCustomerSide ? t.parties.collectDebt : t.parties.payDebt}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 p-5 space-y-3">
-          <h3 className="text-sm font-black">{t.parties.paymentHistory}</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500">
-                <tr>
-                  <th className="py-2 px-3 text-start">#</th>
-                  <th className="py-2 px-3 text-start">{t.date}</th>
-                  <th className="py-2 px-3 text-start">{isCustomerSide ? t.sales.customer : t.purchases.supplier}</th>
-                  <th className="py-2 px-3 text-end">{t.amount}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-                {debtPayments
-                  .filter((dp: any) =>
-                    isCustomerSide ? dp.type === 'DEBTOR_COLLECTION' : dp.type === 'CREDITOR_PAYMENT'
+          {tab === 'LIST' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-52 sm:w-64">
+                <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t.searchPlaceholder}
+                  className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
+                />
+              </div>
+              <button
+                onClick={() => setOnlyDebtors(!onlyDebtors)}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
+                  onlyDebtors
+                    ? 'bg-rose-600 text-white border-rose-600'
+                    : 'bg-slate-100 dark:bg-charcoal-800 border-transparent'
+                }`}
+              >
+                {t.parties.onlyWithDebt}
+              </button>
+              <button
+                onClick={() =>
+                  exportToCsv(
+                    `${mode.toLowerCase()}-iqd`,
+                    ['Code', 'Name', 'Phone', 'City', 'Balance IQD'],
+                    filteredList.map((p: any) => [p.code, p.name, p.phone, p.city || '', p.balanceIqd])
                   )
-                  .map((dp: any) => (
-                    <tr key={dp.id}>
-                      <td className="py-2.5 px-3 font-mono font-bold text-emerald-500">{dp.paymentNumber}</td>
-                      <td className="py-2.5 px-3 text-slate-500">{new Date(dp.date).toLocaleDateString()}</td>
-                      <td className="py-2.5 px-3 font-semibold">{dp.customer?.name || dp.supplier?.name}</td>
-                      <td className="py-2.5 px-3 text-end font-bold text-emerald-500">{fmtIqd(dp.amountIqd, lang)}</td>
-                    </tr>
-                  ))}
+                }
+                className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold flex items-center gap-1"
+              >
+                <Download className="w-3.5 h-3.5" /> Excel
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* TAB 1: DIRECTORY LIST */}
+        {tab === 'LIST' && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
+                <tr>
+                  <th className="py-3 px-4 text-start">{partyLabel}</th>
+                  <th className="py-3 px-4 text-start">{t.employees.phone}</th>
+                  <th className="py-3 px-4 text-end">{t.due}</th>
+                  <th className="py-3 px-4 text-center">{t.actions}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
+                {filteredList.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-12 text-center text-slate-400">{t.noData}</td>
+                  </tr>
+                ) : (
+                  filteredList.map((p: any) => {
+                    const bal = Number(p.balanceIqd || 0);
+                    return (
+                      <tr key={p.id} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
+                        <td className="py-3.5 px-4">
+                          <div className="font-black text-slate-900 dark:text-white">{p.name}</div>
+                          <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                            <span className="font-mono text-emerald-500">{p.code}</span>
+                            {p.city && (
+                              <span className="flex items-center gap-0.5">
+                                <MapPin className="w-3 h-3" /> {p.city}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-xs text-slate-500">
+                          {p.phone ? (
+                            <span dir="ltr" className="inline-flex items-center gap-1.5 font-mono">
+                              <Phone className="w-3.5 h-3.5 text-emerald-500" />
+                              {p.phone}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-end">
+                          {bal > 0 ? (
+                            <span className="font-black text-rose-500 text-base">
+                              {fmtIqd(bal, lang)}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-500 text-xs font-black">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              {lang === 'ku' ? 'قەرزی نییە' : lang === 'ar' ? 'لا يوجد دين' : 'Settled'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {bal > 0 && (
+                              <button
+                                onClick={() => openSettlementFor(p)}
+                                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition"
+                              >
+                                {isCustomerSide ? t.parties.collectDebt : t.parties.payDebt}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleOpenStatement(p.id)}
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:text-teal-500 text-xs font-semibold transition"
+                            >
+                              <FileSpreadsheet className="w-3.5 h-3.5 text-teal-500" />
+                              {t.parties.statement}
+                            </button>
+                            <button
+                              onClick={() => openEditParty(p)}
+                              title={t.edit}
+                              className="p-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:text-emerald-500 transition"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
-        </div>
+        )}
+
+        {/* TAB 2: OPEN / UNPAID INVOICES */}
+        {tab === 'UNPAID' && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
+                <tr>
+                  <th className="py-3 px-4 text-start">#</th>
+                  <th className="py-3 px-4 text-start">{t.date}</th>
+                  <th className="py-3 px-4 text-start">{partyLabel}</th>
+                  <th className="py-3 px-4 text-end">{t.total}</th>
+                  <th className="py-3 px-4 text-end">{t.paid}</th>
+                  <th className="py-3 px-4 text-end">{t.due}</th>
+                  <th className="py-3 px-4 text-center">{t.actions}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
+                {openInvoices.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-12 text-center text-slate-400">{t.noData}</td>
+                  </tr>
+                ) : (
+                  openInvoices.map((inv: any) => (
+                    <tr key={inv.id} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
+                      <td className="py-3 px-4 font-mono text-xs font-bold text-emerald-500">{inv.invoiceNumber}</td>
+                      <td className="py-3 px-4 text-xs text-slate-500">
+                        {inv.date ? new Date(inv.date).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="py-3 px-4 font-bold">{inv.customer?.name || inv.supplier?.name || '—'}</td>
+                      <td className="py-3 px-4 text-end font-semibold">{fmtIqd(inv.totalIqd, lang)}</td>
+                      <td className="py-3 px-4 text-end font-bold text-emerald-500">{fmtIqd(inv.paidIqd, lang)}</td>
+                      <td className="py-3 px-4 text-end font-black text-rose-500">{fmtIqd(inv.dueIqd, lang)}</td>
+                      <td className="py-3 px-4 text-center">
+                        <button
+                          onClick={() => openSettlementFor(inv.customer || inv.supplier, inv)}
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
+                        >
+                          {isCustomerSide ? t.parties.collectDebt : t.parties.payDebt}
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* TAB 3: PAYMENT HISTORY */}
+        {tab === 'HISTORY' && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
+                <tr>
+                  <th className="py-3 px-4 text-start">#</th>
+                  <th className="py-3 px-4 text-start">{t.date}</th>
+                  <th className="py-3 px-4 text-start">{partyLabel}</th>
+                  <th className="py-3 px-4 text-start">{t.notes}</th>
+                  <th className="py-3 px-4 text-end">{t.amount}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
+                {sidePayments.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-12 text-center text-slate-400">{t.noData}</td>
+                  </tr>
+                ) : (
+                  sidePayments.map((dp: any) => (
+                    <tr key={dp.id}>
+                      <td className="py-3 px-4 font-mono text-xs font-bold text-emerald-500">{dp.paymentNumber}</td>
+                      <td className="py-3 px-4 text-xs text-slate-500">
+                        {dp.date ? new Date(dp.date).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="py-3 px-4 font-bold">{dp.customer?.name || dp.supplier?.name || '—'}</td>
+                      <td className="py-3 px-4 text-xs text-slate-400">{dp.notes || '—'}</td>
+                      <td className="py-3 px-4 text-end font-black text-emerald-500">{fmtIqd(dp.amountIqd, lang)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* Collect / Pay Debt Modal (IQD Only) */}
+      {/* SIMPLE COLLECT / PAY DEBT MODAL (WITH QUICK FULL/HALF BUTTONS & LIVE BALANCE PREVIEW) */}
       {showSettlementModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
-          <form onSubmit={handleRecordSettlement} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4">
-            <h3 className="text-lg font-black">
-              {isCustomerSide ? t.parties.collectDebt : t.parties.payDebt}
-            </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 overflow-y-auto">
+          <form onSubmit={handleRecordSettlement} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 my-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black flex items-center gap-2 text-emerald-500">
+                <Wallet className="w-5 h-5" />
+                {isCustomerSide ? t.parties.collectDebt : t.parties.payDebt}
+              </h3>
+              <button type="button" onClick={() => setShowSettlementModal(false)} className="p-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-slate-400">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
             <div>
-              <label className="block text-xs font-bold mb-1">
-                {isCustomerSide ? t.sales.customer : t.purchases.supplier} *
-              </label>
+              <label className="block text-xs font-bold mb-1">{partyLabel} *</label>
               <SearchableSelect
                 value={selectedPartyId}
                 onChange={(id) => {
                   setSelectedPartyId(id);
                   setSelectedInvoiceId('');
                   const p = rawList.find((x: any) => x.id === id);
-                  if (p) setPayAmountIqd(String(Math.round(Number(p.balanceIqd || 0))));
+                  if (p) setPayAmountIqd(Number(p.balanceIqd || 0) > 0 ? String(Math.round(Number(p.balanceIqd))) : '');
                 }}
                 options={rawList.map((p: any) => ({
                   value: p.id,
@@ -413,66 +622,129 @@ export function PartiesAndDebtModuleView({
                 }))}
               />
             </div>
+
+            {/* Current Debt Summary + Quick Full / Half Buttons */}
+            {selectedPartyObj && Number(selectedPartyObj.balanceIqd || 0) > 0 && (
+              <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 space-y-2.5 text-xs">
+                <div className="flex justify-between font-bold">
+                  <span className="text-slate-400">{lang === 'ku' ? 'قەرزی ئێستا:' : lang === 'ar' ? 'الدين الحالي:' : 'Current Debt:'}</span>
+                  <span className="text-rose-500 font-black text-sm">{fmtIqd(selectedPartyObj.balanceIqd, lang)}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPayAmountIqd(String(Math.round(Number(selectedPartyObj.balanceIqd))))}
+                    className="py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-500 font-bold transition"
+                  >
+                    {lang === 'ku' ? 'هەموو قەرزەکە' : lang === 'ar' ? 'كامل المبلغ' : 'Full Debt'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPayAmountIqd(String(Math.round(Number(selectedPartyObj.balanceIqd) / 2)))}
+                    className="py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-500 font-bold transition"
+                  >
+                    {lang === 'ku' ? 'نیوەی قەرزەکە' : lang === 'ar' ? 'نصف المبلغ' : 'Half Debt'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold mb-1">{t.amount} *</label>
-                <input type="number" min="1" step="any" required value={payAmountIqd} onChange={(e) => setPayAmountIqd(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-base font-black text-emerald-500" />
+                <input
+                  type="number"
+                  min="1"
+                  step="any"
+                  required
+                  value={payAmountIqd}
+                  onChange={(e) => setPayAmountIqd(e.target.value)}
+                  placeholder="0"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-base font-black text-emerald-500"
+                />
               </div>
               <div>
                 <label className="block text-xs font-bold mb-1">{t.date}</label>
                 <CustomDatePicker value={payDate} onChange={setPayDate} lang={lang} />
               </div>
             </div>
+
+            {selectedPartyObj && Number(payAmountIqd || 0) > 0 && Number(selectedPartyObj.balanceIqd || 0) > 0 && (
+              <div className="flex justify-between text-xs font-bold px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800">
+                <span className="text-slate-400">
+                  {lang === 'ku' ? 'قەرزی ماوە دوای پارەدان:' : lang === 'ar' ? 'المتبقي بعد الدفع:' : 'Remaining After Payment:'}
+                </span>
+                <span className="text-emerald-500 font-black">
+                  {fmtIqd(Math.max(0, Number(selectedPartyObj.balanceIqd) - Math.round(Number(payAmountIqd))), lang)}
+                </span>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold mb-1">{t.nav.cashbank}</label>
-              <select value={finAccId} onChange={(e) => setFinAccId(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs">
+              <select value={finAccId} onChange={(e) => setFinAccId(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold">
                 {financialAccounts.map((fa) => (
                   <option key={fa.id} value={fa.id}>{locName(fa, lang)} ({fmtIqd(fa.balanceIqd, lang)})</option>
                 ))}
               </select>
             </div>
+
             <div>
               <label className="block text-xs font-bold mb-1">{t.notes}</label>
-              <input type="text" value={payNotes} onChange={(e) => setPayNotes(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
+              <input type="text" value={payNotes} onChange={(e) => setPayNotes(e.target.value)} placeholder={lang === 'ku' ? 'تێبینی (ئارەزوومەندانە)...' : 'Notes (optional)...'} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
             </div>
+
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setShowSettlementModal(false)} className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-sm font-semibold">{t.cancel}</button>
-              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-black">{t.confirm}</button>
+              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-lg shadow-emerald-600/20">
+                {submitting ? t.saving : t.confirm}
+              </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* Add Customer / Supplier Modal */}
-      {showAddParty && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
-          <form onSubmit={handleCreateParty} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4">
-            <h3 className="text-lg font-black">
-              {isCustomerSide ? t.parties.addCustomer : t.parties.addSupplier}
-            </h3>
+      {/* ADD / EDIT CUSTOMER OR SUPPLIER MODAL */}
+      {showPartyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 overflow-y-auto">
+          <form onSubmit={handleSaveParty} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 my-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black">
+                {editingPartyId
+                  ? `${t.edit} ${partyLabel}`
+                  : isCustomerSide
+                  ? t.parties.addCustomer
+                  : t.parties.addSupplier}
+              </h3>
+              <button type="button" onClick={() => setShowPartyModal(false)} className="p-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-slate-400">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
             <div>
-              <label className="block text-xs font-bold mb-1">{t.employees.name} *</label>
-              <input type="text" required value={partyName} onChange={(e) => setPartyName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-semibold" />
+              <label className="block text-xs font-bold mb-1">{partyLabel} *</label>
+              <input type="text" required value={partyName} onChange={(e) => setPartyName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold mb-1">{t.employees.phone}</label>
-                <input type="text" value={partyPhone} onChange={(e) => setPartyPhone(e.target.value)} placeholder="0750XXXXXXX" className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono" />
+                <input type="text" dir="ltr" value={partyPhone} onChange={(e) => setPartyPhone(e.target.value)} placeholder="0750XXXXXXX" className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono" />
               </div>
               <div>
                 <label className="block text-xs font-bold mb-1">{lang === 'ku' ? 'شار' : lang === 'ar' ? 'المدينة' : 'City'}</label>
                 <input type="text" value={partyCity} onChange={(e) => setPartyCity(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
               </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold mb-1">
-                {lang === 'ku' ? 'قەرزی سەرەتایی (د.ع - ئارەزوومەندانە)' : lang === 'ar' ? 'الرصيد الافتتاحي (د.ع)' : 'Opening Debt Balance (IQD)'}
-              </label>
-              <input type="number" min="0" step="any" value={partyOpeningBalIqd} onChange={(e) => setPartyOpeningBalIqd(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold" />
-            </div>
+            {!editingPartyId && (
+              <div>
+                <label className="block text-xs font-bold mb-1">
+                  {lang === 'ku' ? 'قەرزی سەرەتایی (د.ع - ئارەزوومەندانە)' : lang === 'ar' ? 'الرصيد الافتتاحي (د.ع)' : 'Opening Debt Balance (IQD)'}
+                </label>
+                <input type="number" min="0" step="any" value={partyOpeningBalIqd} onChange={(e) => setPartyOpeningBalIqd(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold" />
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setShowAddParty(false)} className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-sm font-semibold">{t.cancel}</button>
-              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-black">{t.save}</button>
+              <button type="button" onClick={() => setShowPartyModal(false)} className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-sm font-semibold">{t.cancel}</button>
+              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-black">{submitting ? t.saving : t.save}</button>
             </div>
           </form>
         </div>
