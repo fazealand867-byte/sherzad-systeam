@@ -1064,6 +1064,9 @@ try {
             if (!$rawCode) {
                 $rawCode = preg_replace('/[^a-z0-9_]+/', '_', strtolower($nameEn));
                 $rawCode = trim($rawCode, '_') ?: ('unit_' . rand(100, 999));
+                while ($engine->findUnitByCode($rawCode)) {
+                    $rawCode .= '_' . rand(10, 99);
+                }
             }
             if ($engine->findUnitByCode($rawCode)) {
                 throw new Exception("Unit code '{$rawCode}' already exists.");
