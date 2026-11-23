@@ -16,6 +16,8 @@ import {
   Briefcase,
   FolderPlus,
   Search,
+  CalendarOff,
+  Minus,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import {
@@ -79,6 +81,11 @@ export function ExpensesModuleView({
   const [salaryPaymentType, setSalaryPaymentType] = useState<'FULL' | 'PARTIAL' | 'ADVANCE'>('FULL');
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
 
+  // Inline Off Days + Optional Deduction inside Salary Payment
+  const [salOffDays, setSalOffDays] = useState('0');
+  const [salHasDeduction, setSalHasDeduction] = useState(false);
+  const [salDeductionIqd, setSalDeductionIqd] = useState('');
+
   // Advanced optional fields (collapsed by default)
   const [titleOverride, setTitleOverride] = useState('');
   const [vendorName, setVendorName] = useState('');
@@ -102,6 +109,9 @@ export function ExpensesModuleView({
     setVendorName('');
     setShowAdvanced(false);
     setFinancialAccountId(financialAccounts[0]?.id || '');
+    setSalOffDays('0');
+    setSalHasDeduction(false);
+    setSalDeductionIqd('');
     if (mode === 'SALARY') {
       setCategory('SALARIES');
       setSalaryMonth(currentMonthStr());
@@ -159,6 +169,9 @@ export function ExpensesModuleView({
   const handleSelectEmployee = (empId: string) => {
     setSelectedEmployeeId(empId);
     setDuplicateWarning(null);
+    setSalOffDays('0');
+    setSalHasDeduction(false);
+    setSalDeductionIqd('');
     const emp = effectiveEmployees.find((e) => e.id === empId);
     if (emp) {
       const rem = Number(emp.remainingSalaryIqd || 0);
@@ -173,6 +186,24 @@ export function ExpensesModuleView({
         setAmountIqd('');
         setSalaryPaymentType('FULL');
       }
+    }
+  };
+
+  const recalcSalaryAfterDeduction = (emp: any, daysVal: string, deductOn: boolean, customDedVal?: string) => {
+    const days = Math.max(0, Number(daysVal || 0));
+    const monthly = Number(emp?.monthlySalaryIqd || 0);
+    const baseRem = Number(emp?.remainingSalaryIqd || monthly || 0);
+    let ded = 0;
+    if (deductOn && days > 0) {
+      if (customDedVal !== undefined) {
+        ded = Math.max(0, Math.round(Number(customDedVal || 0)));
+      } else {
+        ded = monthly > 0 ? Math.round((monthly / 30) * days) : 0;
+        setSalDeductionIqd(ded > 0 ? String(ded) : '');
+      }
+    }
+    if (salaryPaymentType === 'FULL' && baseRem > 0) {
+      setAmountIqd(String(Math.max(0, baseRem - ded)));
     }
   };
 
@@ -194,12 +225,35 @@ export function ExpensesModuleView({
 
     setSubmitting(true);
     try {
+      // If off days were entered during salary payment, record them first so remaining salary & off-days history stay 100% accurate
+      const offDaysNum = Math.max(0, Number(salOffDays || 0));
+      const dedNum = salHasDeduction && offDaysNum > 0 ? Math.max(0, Math.round(Number(salDeductionIqd || 0))) : 0;
+      if (isSalaryMode && offDaysNum > 0 && !confirmDuplicate) {
+        await fetch('/api/employees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'recordOffDays',
+            employeeId: selectedEmployeeId,
+            salaryMonth,
+            date,
+            days: offDaysNum,
+            hasDeduction: salHasDeduction && dedNum > 0,
+            deductionIqd: dedNum,
+            reason: notes.trim() || undefined,
+          }),
+        });
+      }
+
       const payload: any = {
         action: 'createExpense',
         category,
         amountIqd: Number(amountIqd),
         date,
-        notes: notes.trim() || undefined,
+        notes:
+          offDaysNum > 0
+            ? `${notes.trim() ? notes.trim() + ' — ' : ''}${offDaysNum} ${lang === 'ku' ? 'ڕۆژ مۆڵەت' : lang === 'ar' ? 'يوم إجازة' : 'day(s) off'}${dedNum > 0 ? ` (-${fmtIqd(dedNum, lang)})` : ''}`
+            : (notes.trim() || undefined),
         title: titleOverride.trim() || undefined,
         vendorName: vendorName.trim() || undefined,
         paymentMethod,
@@ -773,6 +827,109 @@ export function ExpensesModuleView({
                     onChange={setSalaryMonth}
                     lang={lang}
                   />
+                </div>
+
+                {/* OFF DAYS & OPTIONAL SALARY DEDUCTION RIGHT INSIDE PAY SALARY POPUP */}
+                <div className={`p-3.5 rounded-xl border transition space-y-3 ${
+                  Number(salOffDays || 0) > 0 && salHasDeduction
+                    ? 'bg-rose-500/10 border-rose-500/40'
+                    : 'bg-white/60 dark:bg-charcoal-950/70 border-teal-500/25'
+                }`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-black text-amber-500 flex items-center gap-1.5">
+                      <CalendarOff className="w-4 h-4" />
+                      {lang === 'ku'
+                        ? 'ڕۆژانی مۆڵەت / نەهاتن (ئارەزوومەندانە)'
+                        : lang === 'ar'
+                        ? 'أيام الإجازة / الغياب (اختياري)'
+                        : 'Off Days / Leave (Optional)'}
+                    </label>
+                    {selectedEmployee && Number(selectedEmployee.offDaysThisMonth || 0) > 0 && (
+                      <span className="text-[11px] font-bold text-amber-400">
+                        {lang === 'ku' ? 'پێشتر تۆمارکراو:' : lang === 'ar' ? 'مسجل سابقاً:' : 'Already recorded:'}{' '}
+                        {selectedEmployee.offDaysThisMonth} {lang === 'ku' ? 'ڕۆژ' : lang === 'ar' ? 'يوم' : 'd'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = Math.max(0, Number(salOffDays || 0) - 1);
+                          setSalOffDays(String(next));
+                          recalcSalaryAfterDeduction(selectedEmployee, String(next), salHasDeduction);
+                        }}
+                        className="w-9 h-10 rounded-xl bg-slate-100 dark:bg-charcoal-800 flex items-center justify-center font-black"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={salOffDays}
+                        onChange={(e) => {
+                          setSalOffDays(e.target.value);
+                          recalcSalaryAfterDeduction(selectedEmployee, e.target.value, salHasDeduction);
+                        }}
+                        placeholder="0"
+                        className="w-full py-2 text-center rounded-xl bg-slate-50 dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-sm font-black"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = Number(salOffDays || 0) + 1;
+                          setSalOffDays(String(next));
+                          recalcSalaryAfterDeduction(selectedEmployee, String(next), salHasDeduction);
+                        }}
+                        className="w-9 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center font-black"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !salHasDeduction;
+                        setSalHasDeduction(next);
+                        const days = Number(salOffDays || 0) > 0 ? salOffDays : '1';
+                        if (next && Number(salOffDays || 0) <= 0) setSalOffDays('1');
+                        recalcSalaryAfterDeduction(selectedEmployee, days, next);
+                      }}
+                      className={`py-2.5 px-3 rounded-xl text-xs font-black border transition ${
+                        salHasDeduction
+                          ? 'bg-rose-600 text-white border-rose-600 shadow'
+                          : 'bg-slate-100 dark:bg-charcoal-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-charcoal-700'
+                      }`}
+                    >
+                      {salHasDeduction
+                        ? (lang === 'ku' ? 'لێبڕین لە مووچە: کراوەیە ✓' : lang === 'ar' ? 'الخصم من الراتب: مفعّل ✓' : 'Salary Deduction: ON ✓')
+                        : (lang === 'ku' ? 'لێبڕین لە مووچە (ئارەزوومەندانە)' : lang === 'ar' ? 'خصم من الراتب (اختياري)' : 'Deduct from Salary (Optional)')}
+                    </button>
+                  </div>
+
+                  {salHasDeduction && (
+                    <div className="space-y-1.5 pt-2 border-t border-rose-500/20">
+                      <label className="block text-[11px] font-bold text-rose-500">
+                        {lang === 'ku' ? 'بڕی لێبڕین (د.ع):' : lang === 'ar' ? 'مبلغ الخصم (د.ع):' : 'Deduction Amount (IQD):'}
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="0"
+                        value={salDeductionIqd}
+                        onChange={(e) => {
+                          setSalDeductionIqd(e.target.value);
+                          recalcSalaryAfterDeduction(selectedEmployee, salOffDays, true, e.target.value);
+                        }}
+                        className="w-full px-3.5 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-rose-500/40 text-sm font-black text-rose-500"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             )}

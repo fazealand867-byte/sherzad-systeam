@@ -77,6 +77,9 @@ export function EmployeesPayrollView({
   const [payNotes, setPayNotes] = useState('');
   const [payIdemKey, setPayIdemKey] = useState(() => makeIdempotencyKey('sal'));
   const [dupWarning, setDupWarning] = useState<string | null>(null);
+  const [payOffDays, setPayOffDays] = useState('0');
+  const [payHasDeduction, setPayHasDeduction] = useState(false);
+  const [payDeductionIqd, setPayDeductionIqd] = useState('');
 
   // Off Days & Optional Deduction Modal
   const [offTarget, setOffTarget] = useState<any | null>(null);
@@ -219,6 +222,9 @@ export function EmployeesPayrollView({
     setDupWarning(null);
     setPayDate(todayDateStr());
     setPayNotes('');
+    setPayOffDays('0');
+    setPayHasDeduction(false);
+    setPayDeductionIqd('');
     const rem = Number(emp.remainingSalaryIqd || 0);
     if (rem > 0) {
       setPayAmount(String(rem));
@@ -226,6 +232,24 @@ export function EmployeesPayrollView({
     } else {
       setPayAmount('');
       setPayType('ADVANCE');
+    }
+  };
+
+  const recalcPayModalDeduction = (emp: any, daysVal: string, deductOn: boolean, customDed?: string) => {
+    const days = Math.max(0, Number(daysVal || 0));
+    const monthly = Number(emp?.monthlySalaryIqd || 0);
+    const baseRem = Number(emp?.remainingSalaryIqd || monthly || 0);
+    let ded = 0;
+    if (deductOn && days > 0) {
+      if (customDed !== undefined) {
+        ded = Math.max(0, Math.round(Number(customDed || 0)));
+      } else {
+        ded = monthly > 0 ? Math.round((monthly / 30) * days) : 0;
+        setPayDeductionIqd(ded > 0 ? String(ded) : '');
+      }
+    }
+    if (payType === 'FULL' && baseRem > 0) {
+      setPayAmount(String(Math.max(0, baseRem - ded)));
     }
   };
 
@@ -281,6 +305,25 @@ export function EmployeesPayrollView({
     if (!payTarget || Number(payAmount) <= 0) return;
     setSubmitting(true);
     try {
+      const offDaysNum = Math.max(0, Number(payOffDays || 0));
+      const dedNum = payHasDeduction && offDaysNum > 0 ? Math.max(0, Math.round(Number(payDeductionIqd || 0))) : 0;
+      if (offDaysNum > 0 && !confirmDuplicate) {
+        await fetch('/api/employees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'recordOffDays',
+            employeeId: payTarget.id,
+            salaryMonth: selectedMonth,
+            date: payDate,
+            days: offDaysNum,
+            hasDeduction: payHasDeduction && dedNum > 0,
+            deductionIqd: dedNum,
+            reason: payNotes.trim() || undefined,
+          }),
+        });
+      }
+
       const res = await fetch('/api/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -291,7 +334,10 @@ export function EmployeesPayrollView({
           paymentType: payType,
           salaryMonth: selectedMonth,
           date: payDate,
-          notes: payNotes.trim() || undefined,
+          notes:
+            offDaysNum > 0
+              ? `${payNotes.trim() ? payNotes.trim() + ' — ' : ''}${offDaysNum} ${lang === 'ku' ? 'ڕۆژ مۆڵەت' : lang === 'ar' ? 'يوم إجازة' : 'day(s) off'}${dedNum > 0 ? ` (-${fmtIqd(dedNum, lang)})` : ''}`
+              : (payNotes.trim() || undefined),
           financialAccountId: financialAccounts[0]?.id,
           idempotencyKey: payIdemKey,
           confirmDuplicate,
@@ -903,7 +949,8 @@ export function EmployeesPayrollView({
                   onClick={() => {
                     setPayType(pt);
                     if (pt === 'FULL' && Number(payTarget.remainingSalaryIqd) > 0) {
-                      setPayAmount(String(payTarget.remainingSalaryIqd));
+                      const ded = payHasDeduction && Number(payOffDays || 0) > 0 ? Math.round(Number(payDeductionIqd || 0)) : 0;
+                      setPayAmount(String(Math.max(0, Number(payTarget.remainingSalaryIqd) - ded)));
                     }
                   }}
                   className={`py-2 rounded-xl text-xs font-bold ${
@@ -913,6 +960,88 @@ export function EmployeesPayrollView({
                   {pt === 'FULL' ? t.expenses.fullPayment : pt === 'PARTIAL' ? t.expenses.partialPayment : t.expenses.advancePayment}
                 </button>
               ))}
+            </div>
+
+            {/* Inline Off Days + Optional Deduction inside Pay Salary Modal */}
+            <div className={`p-3 rounded-xl border space-y-2.5 ${
+              Number(payOffDays || 0) > 0 && payHasDeduction
+                ? 'bg-rose-500/10 border-rose-500/40'
+                : 'bg-slate-50 dark:bg-charcoal-950 border-slate-200 dark:border-charcoal-800'
+            }`}>
+              <div className="text-xs font-black text-amber-500 flex items-center gap-1.5">
+                <CalendarOff className="w-3.5 h-3.5" />
+                {lang === 'ku' ? 'ڕۆژانی مۆڵەت / نەهاتن (ئارەزوومەندانە)' : lang === 'ar' ? 'أيام الإجازة / الغياب (اختياري)' : 'Off Days (Optional)'}
+              </div>
+              <div className="grid grid-cols-2 gap-2 items-center">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.max(0, Number(payOffDays || 0) - 1);
+                      setPayOffDays(String(next));
+                      recalcPayModalDeduction(payTarget, String(next), payHasDeduction);
+                    }}
+                    className="w-8 h-9 rounded-xl bg-slate-200 dark:bg-charcoal-800 flex items-center justify-center"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={payOffDays}
+                    onChange={(e) => {
+                      setPayOffDays(e.target.value);
+                      recalcPayModalDeduction(payTarget, e.target.value, payHasDeduction);
+                    }}
+                    className="w-full py-1.5 text-center rounded-xl bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 text-sm font-black"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Number(payOffDays || 0) + 1;
+                      setPayOffDays(String(next));
+                      recalcPayModalDeduction(payTarget, String(next), payHasDeduction);
+                    }}
+                    className="w-8 h-9 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !payHasDeduction;
+                    setPayHasDeduction(next);
+                    const days = Number(payOffDays || 0) > 0 ? payOffDays : '1';
+                    if (next && Number(payOffDays || 0) <= 0) setPayOffDays('1');
+                    recalcPayModalDeduction(payTarget, days, next);
+                  }}
+                  className={`py-2 px-2.5 rounded-xl text-[11px] font-black border transition ${
+                    payHasDeduction
+                      ? 'bg-rose-600 text-white border-rose-600'
+                      : 'bg-white dark:bg-charcoal-900 border-slate-200 dark:border-charcoal-700 text-slate-500 dark:text-slate-300'
+                  }`}
+                >
+                  {payHasDeduction
+                    ? (lang === 'ku' ? 'بە لێبڕین ✓' : lang === 'ar' ? 'مع خصم ✓' : 'Deduct ON ✓')
+                    : (lang === 'ku' ? 'لێبڕین (ئارەزوومەندانە)' : lang === 'ar' ? 'خصم (اختياري)' : 'Deduct (Optional)')}
+                </button>
+              </div>
+              {payHasDeduction && (
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder={lang === 'ku' ? 'بڕی لێبڕین (د.ع)' : lang === 'ar' ? 'مبلغ الخصم (د.ع)' : 'Deduction IQD'}
+                  value={payDeductionIqd}
+                  onChange={(e) => {
+                    setPayDeductionIqd(e.target.value);
+                    recalcPayModalDeduction(payTarget, payOffDays, true, e.target.value);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white dark:bg-charcoal-900 border border-rose-500/40 text-sm font-black text-rose-500"
+                />
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
