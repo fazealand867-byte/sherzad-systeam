@@ -8,6 +8,11 @@ import {
   Settings,
   DatabaseBackup,
   TrendingUp,
+  Building2,
+  ShieldCheck,
+  CheckCircle2,
+  Phone,
+  MapPin,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import { exportToCsv, fmtIqd, fmtQty, locName } from '@/lib/client-utils';
@@ -449,6 +454,8 @@ export function SettingsModuleView({
   const [companyNameEn, setCompanyNameEn] = useState(s.companyNameEn || '');
   const [phone, setPhone] = useState(s.phone || '');
   const [addressKu, setAddressKu] = useState(s.addressKu || '');
+  const [addressAr, setAddressAr] = useState(s.addressAr || '');
+  const [addressEn, setAddressEn] = useState(s.addressEn || '');
   const [expenseThresholdIqd, setExpenseThresholdIqd] = useState(String(s.expenseApprovalThresholdIqd ?? 1500000));
   const [allowNegativeStock, setAllowNegativeStock] = useState(Boolean(s.allowNegativeStock));
   const [submitting, setSubmitting] = useState(false);
@@ -461,10 +468,19 @@ export function SettingsModuleView({
       setCompanyNameEn(st.companyNameEn || '');
       setPhone(st.phone || '');
       setAddressKu(st.addressKu || '');
+      setAddressAr(st.addressAr || '');
+      setAddressEn(st.addressEn || '');
       setExpenseThresholdIqd(String(st.expenseApprovalThresholdIqd ?? 1500000));
       setAllowNegativeStock(Boolean(st.allowNegativeStock));
     }
   }, [settingsData]);
+
+  const activeAddress = lang === 'ku' ? addressKu : lang === 'ar' ? (addressAr || addressKu) : (addressEn || addressKu);
+  const setActiveAddress = (val: string) => {
+    if (lang === 'ku') setAddressKu(val);
+    else if (lang === 'ar') setAddressAr(val);
+    else setAddressEn(val);
+  };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -475,19 +491,30 @@ export function SettingsModuleView({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'updateSettings',
-          companyNameKu,
-          companyNameAr,
-          companyNameEn,
-          phone,
-          addressKu,
-          expenseApprovalThresholdIqd: Number(expenseThresholdIqd || 0),
+          companyNameKu: companyNameKu.trim(),
+          companyNameAr: companyNameAr.trim(),
+          companyNameEn: companyNameEn.trim(),
+          phone: phone.trim(),
+          addressKu: addressKu.trim(),
+          addressAr: addressAr.trim(),
+          addressEn: addressEn.trim(),
+          expenseApprovalThresholdIqd: Math.max(0, Number(expenseThresholdIqd || 0)),
           allowNegativeStock,
         }),
       });
       if (res.ok) {
-        notify('success', `${t.nav.settings} ✓`);
+        notify(
+          'success',
+          lang === 'ku'
+            ? 'ڕێکخستنەکان بە سەرکەوتوویی پاشەکەوت کران ✓'
+            : lang === 'ar'
+            ? 'تم حفظ الإعدادات بنجاح ✓'
+            : 'Settings saved successfully ✓'
+        );
         await onRefresh();
-      } else notify('error', (await res.json()).error || 'Failed');
+      } else {
+        notify('error', (await res.json()).error || 'Failed');
+      }
     } catch (err: any) {
       notify('error', err?.message || 'Network error');
     } finally {
@@ -512,7 +539,15 @@ export function SettingsModuleView({
         a.download = `food-factory-backup-${new Date().toISOString().slice(0, 10)}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        notify('success', 'Database backup downloaded ✓');
+        notify(
+          'success',
+          lang === 'ku'
+            ? 'باکئەپی داتابەیس بە سەرکەوتوویی داگیرا ✓'
+            : lang === 'ar'
+            ? 'تم تحميل النسخة الاحتياطية بنجاح ✓'
+            : 'Database backup downloaded ✓'
+        );
+        await onRefresh();
       } else {
         notify('error', data.error || 'Backup failed');
       }
@@ -523,70 +558,240 @@ export function SettingsModuleView({
     }
   };
 
+  const lastBackupText = s.lastBackupAt ? new Date(s.lastBackupAt).toLocaleString() : null;
+
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-5xl mx-auto">
+      {/* Header & Database Backup */}
       <div className="bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm flex flex-wrap items-center justify-between gap-4">
-        <h2 className="text-xl font-black flex items-center gap-2.5 text-slate-900 dark:text-white">
-          <Settings className="w-6 h-6 text-emerald-500" />
-          {t.nav.settings}
-        </h2>
-        <button
-          onClick={handleExportBackup}
-          disabled={submitting}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shadow"
-        >
-          <DatabaseBackup className="w-4 h-4" />
-          {lang === 'ku' ? 'داگرتنی باکئەپی داتابەیس (JSON)' : lang === 'ar' ? 'تحميل نسخة احتياطية' : 'Download Backup (JSON)'}
-        </button>
+        <div>
+          <h2 className="text-xl font-black flex items-center gap-2.5 text-slate-900 dark:text-white">
+            <Settings className="w-6 h-6 text-emerald-500" />
+            {t.nav.settings}
+          </h2>
+          <p className="text-xs text-slate-400 mt-1">
+            {lang === 'ku'
+              ? 'بەڕێوەبردنی زانیاری کارگە، یاساکانی کۆگا و داگرتنی باکئەپی داتابەیس'
+              : lang === 'ar'
+              ? 'إدارة بيانات المصنع وقواعد المخزون والنسخ الاحتياطي لقاعدة البيانات'
+              : 'Manage factory details, inventory rules, and database backups'}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {lastBackupText && (
+            <div className="text-[11px] text-slate-400 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <span>
+                {lang === 'ku' ? 'دوایین باکئەپ:' : lang === 'ar' ? 'آخر نسخة:' : 'Last backup:'}{' '}
+                <span dir="ltr" className="font-mono text-slate-600 dark:text-slate-300">{lastBackupText}</span>
+              </span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleExportBackup}
+            disabled={submitting}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-xs font-bold shadow transition"
+          >
+            <DatabaseBackup className="w-4 h-4" />
+            {lang === 'ku' ? 'داگرتنی باکئەپی داتابەیس (JSON)' : lang === 'ar' ? 'تحميل نسخة احتياطية (JSON)' : 'Download Backup (JSON)'}
+          </button>
+        </div>
       </div>
 
-      <form onSubmit={handleSaveSettings} className="bg-white dark:bg-charcoal-900 p-6 rounded-2xl border border-slate-200 dark:border-charcoal-800 space-y-5">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-bold mb-1">ناوی کارگە / کۆمپانیا (کوردی)</label>
-            <input type="text" value={companyNameKu} onChange={(e) => setCompanyNameKu(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
+      <form onSubmit={handleSaveSettings} className="space-y-6">
+        {/* Section 1: Factory / Company Details */}
+        <div className="bg-white dark:bg-charcoal-900 p-6 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm space-y-5">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-charcoal-800">
+            <Building2 className="w-4 h-4 text-emerald-500" />
+            <h3 className="text-sm font-black text-slate-900 dark:text-white">
+              {lang === 'ku' ? 'زانیاری کارگە و کۆمپانیا' : lang === 'ar' ? 'معلومات المصنع والشركة' : 'Factory & Company Info'}
+            </h3>
           </div>
-          <div>
-            <label className="block text-xs font-bold mb-1">اسم المصنع (العربية)</label>
-            <input type="text" value={companyNameAr} onChange={(e) => setCompanyNameAr(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold mb-1">Factory Name (English)</label>
-            <input type="text" value={companyNameEn} onChange={(e) => setCompanyNameEn(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-bold mb-1">{t.employees.phone}</label>
-            <input type="text" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold mb-1">
-              {lang === 'ku' ? 'سنووری پەسەندکردنی خەرجی (د.ع)' : 'Expense Approval Threshold (IQD)'}
+            <label className="block text-xs font-bold mb-1.5 text-slate-600 dark:text-slate-300">
+              ناوی کارگە / کۆمپانیا (کوردی)
             </label>
-            <input type="number" min="0" value={expenseThresholdIqd} onChange={(e) => setExpenseThresholdIqd(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold" />
+            <input
+              type="text"
+              required
+              value={companyNameKu}
+              onChange={(e) => setCompanyNameKu(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-semibold focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold mb-1.5 text-slate-600 dark:text-slate-300">
+                اسم المصنع (العربية)
+              </label>
+              <input
+                type="text"
+                value={companyNameAr}
+                onChange={(e) => setCompanyNameAr(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1.5 text-slate-600 dark:text-slate-300">
+                Factory Name (English)
+              </label>
+              <input
+                type="text"
+                dir="ltr"
+                value={companyNameEn}
+                onChange={(e) => setCompanyNameEn(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="flex items-center gap-1.5 text-xs font-bold mb-1.5 text-slate-600 dark:text-slate-300">
+                <Phone className="w-3.5 h-3.5 text-emerald-500" />
+                {t.employees.phone}
+              </label>
+              <input
+                type="text"
+                dir="ltr"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="flex items-center gap-1.5 text-xs font-bold mb-1.5 text-slate-600 dark:text-slate-300">
+                <MapPin className="w-3.5 h-3.5 text-emerald-500" />
+                {lang === 'ku' ? 'ناونیشان' : lang === 'ar' ? 'العنوان' : 'Address'}
+              </label>
+              <input
+                type="text"
+                value={activeAddress}
+                onChange={(e) => setActiveAddress(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
           </div>
         </div>
 
-        <div>
-          <label className="block text-xs font-bold mb-1">{lang === 'ku' ? 'ناونیشان' : lang === 'ar' ? 'العنوان' : 'Address'}</label>
-          <input type="text" value={addressKu} onChange={(e) => setAddressKu(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
-        </div>
+        {/* Section 2: Operations & Rules */}
+        <div className="bg-white dark:bg-charcoal-900 p-6 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm space-y-5">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-charcoal-800">
+            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+            <h3 className="text-sm font-black text-slate-900 dark:text-white">
+              {lang === 'ku' ? 'یاساکانی کۆگا و خەرجی' : lang === 'ar' ? 'قواعد المخزون والمصروفات' : 'Inventory & Expense Rules'}
+            </h3>
+          </div>
 
-        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-          {t.currencyLabel} — {lang === 'ku' ? 'هەموو مامەڵە داراییەکان تەنها بە دیناری عێراقی (IQD) تۆمار دەکرێن.' : lang === 'ar' ? 'جميع المعاملات المالية مسجلة بالدينار العراقي فقط.' : 'All financial transactions are recorded strictly in Iraqi Dinar (IQD).'}
-        </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                  {lang === 'ku'
+                    ? 'سنووری پەسەندکردنی خەرجی (د.ع)'
+                    : lang === 'ar'
+                    ? 'حد الموافقة على المصروف (د.ع)'
+                    : 'Expense Approval Limit (IQD)'}
+                </label>
+                <span className="text-xs font-black text-emerald-500 tabular-nums">
+                  {fmtIqd(Number(expenseThresholdIqd || 0), lang)}
+                </span>
+              </div>
+              <input
+                type="number"
+                min="0"
+                step="50000"
+                value={expenseThresholdIqd}
+                onChange={(e) => setExpenseThresholdIqd(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold tabular-nums focus:outline-none focus:border-emerald-500"
+              />
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                {lang === 'ku'
+                  ? 'هەر خەرجییەک لەم بڕە زیاتر بێت پێویستی بە پەسەندکردنی بەڕێوەبەر دەبێت.'
+                  : lang === 'ar'
+                  ? 'أي مصروف يتجاوز هذا المبلغ سيتطلب موافقة المدير.'
+                  : 'Expenses above this amount require manager approval before payment.'}
+              </p>
+            </div>
 
-        <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-          <input type="checkbox" checked={allowNegativeStock} onChange={(e) => setAllowNegativeStock(e.target.checked)} className="rounded text-emerald-600" />
-          <span>{lang === 'ku' ? 'ڕێگەدان بە فرۆشتن کاتێک بڕی کۆگا سفر بێت' : 'Allow sales when stock reaches zero'}</span>
-        </label>
+            <div className="pt-0.5">
+              <div className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
+                {lang === 'ku' ? 'کۆنترۆڵی کۆگا' : lang === 'ar' ? 'التحكم بالمخزون' : 'Stock Control'}
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={allowNegativeStock}
+                onClick={() => setAllowNegativeStock((prev) => !prev)}
+                className={`w-full flex items-center justify-between gap-3 p-3.5 rounded-xl border text-start transition ${
+                  allowNegativeStock
+                    ? 'bg-emerald-500/10 border-emerald-500/40'
+                    : 'bg-slate-50 dark:bg-charcoal-950 border-slate-200 dark:border-charcoal-800 hover:border-slate-300 dark:hover:border-charcoal-700'
+                }`}
+              >
+                <div>
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                    {lang === 'ku'
+                      ? 'ڕێگەدان بە فرۆشتن کاتێک بڕی کۆگا سفر بێت'
+                      : lang === 'ar'
+                      ? 'السماح بالبيع عند نفاد المخزون'
+                      : 'Allow sales when stock reaches zero'}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    {allowNegativeStock
+                      ? lang === 'ku'
+                        ? 'چالاکە — فرۆشتن تەنانەت بە کۆگای سفر ڕێگەپێدراوە'
+                        : lang === 'ar'
+                        ? 'مفعّل — يُسمح بالبيع حتى عند نفاد الكمية'
+                        : 'Enabled — Sales allowed even at zero stock'
+                      : lang === 'ku'
+                      ? 'ناچالاکە (پێشنیارکراو) — ڕێگری لە فرۆشتنی کاڵای تەواوبوو'
+                      : lang === 'ar'
+                      ? 'غير مفعّل (موصى به) — يمنع بيع الأصناف المنتهية'
+                      : 'Disabled (Recommended) — Prevents selling out-of-stock items'}
+                  </div>
+                </div>
+                <span
+                  dir="ltr"
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    allowNegativeStock ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-charcoal-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                      allowNegativeStock ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </span>
+              </button>
+            </div>
+          </div>
 
-        <div className="flex justify-end">
-          <button type="submit" disabled={submitting} className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-lg shadow-emerald-600/25">
-            {submitting ? t.saving : t.save}
-          </button>
+          <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            <span>
+              {t.currencyLabel} —{' '}
+              {lang === 'ku'
+                ? 'هەموو مامەڵە داراییەکان تەنها بە دیناری عێراقی (IQD) تۆمار دەکرێن.'
+                : lang === 'ar'
+                ? 'جميع المعاملات المالية مسجلة بالدينار العراقي (IQD) فقط.'
+                : 'All financial transactions are recorded strictly in Iraqi Dinar (IQD).'}
+            </span>
+          </div>
+
+          <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-charcoal-800">
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-8 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-black shadow-lg shadow-emerald-600/25 transition"
+            >
+              {submitting ? t.saving : t.save}
+            </button>
+          </div>
         </div>
       </form>
     </div>
