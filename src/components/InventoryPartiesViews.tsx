@@ -16,6 +16,7 @@ import {
   XCircle,
   Receipt,
   History,
+  Trash2,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import {
@@ -204,6 +205,31 @@ export function PartiesAndDebtModuleView({
     }
   };
 
+  const handleDeleteParty = async (p: any) => {
+    if (!window.confirm(`${t.delete} ${p.name}?`)) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/parties', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          isCustomerSide
+            ? { action: 'deleteCustomer', customerId: p.id }
+            : { action: 'deleteSupplier', supplierId: p.id }
+        ),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        notify('success', `${p.name} ✓`);
+        await onRefresh();
+      } else notify('error', data.error || 'Could not delete');
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleOpenStatement = async (partyId: string) => {
     try {
       const query = isCustomerSide
@@ -327,7 +353,8 @@ export function PartiesAndDebtModuleView({
           <div className="text-xs text-slate-400">{t.parties.totalDebt}</div>
           <div className="text-xl font-black text-rose-500 mt-1">{fmtIqd(totalOutstandingIqd, lang)}</div>
           <div className="text-[11px] text-slate-400 mt-0.5">
-            {debtorsCount} {t.parties.onlyWithDebt}
+            {debtorsCount}{' '}
+            {lang === 'ku' ? 'قەرزدار' : lang === 'ar' ? 'مدين' : 'with debt'}
           </div>
         </button>
 
@@ -493,6 +520,14 @@ export function PartiesAndDebtModuleView({
                               className="p-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:text-emerald-500 transition"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteParty(p)}
+                              disabled={submitting}
+                              title={t.delete}
+                              className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 transition"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </td>

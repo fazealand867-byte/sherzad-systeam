@@ -279,8 +279,19 @@ export function ReportsModuleView({
           {t.nav.reports}
         </h2>
         <div className="flex flex-wrap items-center gap-2">
-          <CustomDatePicker value={startDate} onChange={setStartDate} lang={lang} className="w-40" />
-          <CustomDatePicker value={endDate} onChange={setEndDate} lang={lang} className="w-40" />
+          <CustomDatePicker value={startDate} onChange={setStartDate} lang={lang} className="w-40" placeholder={lang === 'ku' ? 'لە بەرواری' : lang === 'ar' ? 'من تاريخ' : 'From Date'} />
+          <CustomDatePicker value={endDate} onChange={setEndDate} lang={lang} className="w-40" placeholder={lang === 'ku' ? 'تا بەرواری' : lang === 'ar' ? 'إلى تاريخ' : 'To Date'} />
+          {(startDate || endDate) && (
+            <button
+              onClick={() => {
+                setStartDate('');
+                setEndDate('');
+              }}
+              className="px-3 py-2 rounded-xl bg-rose-500/15 text-rose-500 text-xs font-bold"
+            >
+              {lang === 'ku' ? 'لابردنی فلتەر' : lang === 'ar' ? 'مسح' : 'Clear'}
+            </button>
+          )}
           <button onClick={() => window.print()} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">
             <Printer className="w-3.5 h-3.5" /> {t.print}
           </button>
@@ -407,6 +418,8 @@ export function SettingsModuleView({
         notify('success', `${t.nav.settings} ✓`);
         await onRefresh();
       } else notify('error', (await res.json()).error || 'Failed');
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
@@ -430,7 +443,11 @@ export function SettingsModuleView({
         a.click();
         URL.revokeObjectURL(url);
         notify('success', 'Database backup downloaded ✓');
+      } else {
+        notify('error', data.error || 'Backup failed');
       }
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
@@ -472,7 +489,7 @@ export function SettingsModuleView({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-bold mb-1">{t.employees.phone}</label>
-            <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono" />
+            <input type="text" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono" />
           </div>
           <div>
             <label className="block text-xs font-bold mb-1">

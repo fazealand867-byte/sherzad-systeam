@@ -14,12 +14,14 @@ import {
   Unlock,
   Download,
   ShieldCheck,
+  XCircle,
+  Wallet,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import { exportToCsv, fmtIqd, locName } from '@/lib/client-utils';
 
 /* ============================================================================
-   1. CASH & BANK MANAGEMENT (IQD-ONLY)
+   1. CLEAN & SIMPLE CASH & BANK MANAGEMENT (IQD-ONLY)
    ============================================================================ */
 
 export function CashBankModuleView({
@@ -37,6 +39,7 @@ export function CashBankModuleView({
   const accounts = cashBankData?.accounts || [];
   const transactions = cashBankData?.transactions || [];
   const [modal, setModal] = useState<null | 'DEPOSIT' | 'WITHDRAWAL' | 'TRANSFER' | 'RECONCILE' | 'NEW_ACCOUNT'>(null);
+  const [selectedAccFilter, setSelectedAccFilter] = useState<string>('ALL');
   const [submitting, setSubmitting] = useState(false);
 
   const [primaryAccId, setPrimaryAccId] = useState(accounts[0]?.id || '');
@@ -49,8 +52,41 @@ export function CashBankModuleView({
   const [newAccType, setNewAccType] = useState('CASH_REGISTER');
   const [newAccBankName, setNewAccBankName] = useState('');
 
+  const modalTitle = (m: typeof modal) => {
+    if (m === 'DEPOSIT') return lang === 'ku' ? 'زیادکردنی پارە بۆ قاسە / بانک' : lang === 'ar' ? 'إيداع مبلغ' : 'Deposit Money';
+    if (m === 'WITHDRAWAL') return lang === 'ku' ? 'ڕاکێشانی پارە لە قاسە / بانک' : lang === 'ar' ? 'سحب مبلغ' : 'Withdraw Money';
+    if (m === 'TRANSFER') return lang === 'ku' ? 'گواستنەوەی پارە لە نێوان هەژمارەکان' : lang === 'ar' ? 'تحويل بين الحسابات' : 'Transfer Between Accounts';
+    if (m === 'RECONCILE') return lang === 'ku' ? 'ڕێکخستنی باڵانسی قاسە / بانک' : lang === 'ar' ? 'مطابقة الرصيد' : 'Reconcile Balance';
+    if (m === 'NEW_ACCOUNT') return lang === 'ku' ? 'زیادکردنی قاسە یان بانکی نوێ' : lang === 'ar' ? 'إضافة صندوق أو حساب بنكي' : 'Add Cash Safe / Bank Account';
+    return '';
+  };
+
+  const totalLiquidIqd = useMemo(
+    () => accounts.reduce((sum: number, a: any) => sum + Number(a.balanceIqd || 0), 0),
+    [accounts]
+  );
+
+  const filteredTransactions = useMemo(() => {
+    if (selectedAccFilter === 'ALL') return transactions;
+    return transactions.filter((tx: any) => tx.financialAccountId === selectedAccFilter);
+  }, [transactions, selectedAccFilter]);
+
+  const openModal = (m: NonNullable<typeof modal>) => {
+    setPrimaryAccId(accounts[0]?.id || '');
+    setTargetAccId(accounts[1]?.id || accounts[0]?.id || '');
+    setAmountIqd('');
+    setDescription('');
+    setNewAccName('');
+    setNewAccBankName('');
+    setModal(m);
+  };
+
   const handleActionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (modal === 'TRANSFER' && primaryAccId === targetAccId) {
+      notify('error', lang === 'ku' ? 'تکایە دوو هەژماری جیاواز هەڵبژێرە' : lang === 'ar' ? 'اختر حسابين مختلفين' : 'Select two different accounts');
+      return;
+    }
     setSubmitting(true);
     try {
       let payload: any = {};
@@ -80,11 +116,11 @@ export function CashBankModuleView({
       } else if (modal === 'NEW_ACCOUNT') {
         payload = {
           action: 'createAccount',
-          nameKu: newAccName,
-          nameAr: newAccName,
-          nameEn: newAccName,
+          nameKu: newAccName.trim(),
+          nameAr: newAccName.trim(),
+          nameEn: newAccName.trim(),
           type: newAccType,
-          bankName: newAccBankName,
+          bankName: newAccBankName.trim(),
         };
       }
 
@@ -102,76 +138,121 @@ export function CashBankModuleView({
         setDescription('');
         await onRefresh();
       }
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm">
         <div>
           <h2 className="text-xl font-black flex items-center gap-2.5 text-slate-900 dark:text-white">
             <Landmark className="w-6 h-6 text-emerald-500" />
             {t.nav.cashbank}
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">{t.currencyLabel}</p>
+          <p className="text-xs text-slate-500 mt-1">
+            {lang === 'ku' ? 'کۆی پارەی بەردەست:' : lang === 'ar' ? 'إجمالي النقد المتاح:' : 'Total Liquid Cash:'}{' '}
+            <b className="text-emerald-500">{fmtIqd(totalLiquidIqd, lang)}</b>
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => { setPrimaryAccId(accounts[0]?.id || ''); setModal('DEPOSIT'); }} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold">
+          <button onClick={() => openModal('DEPOSIT')} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow transition">
             <ArrowDownLeft className="w-4 h-4" />
             {lang === 'ku' ? 'زیادکردنی پارە' : lang === 'ar' ? 'إيداع' : 'Deposit'}
           </button>
-          <button onClick={() => { setPrimaryAccId(accounts[0]?.id || ''); setModal('WITHDRAWAL'); }} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-bold">
+          <button onClick={() => openModal('WITHDRAWAL')} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow transition">
             <ArrowUpRight className="w-4 h-4" />
-            {lang === 'ku' ? 'ڕاکێشانی پارە' : lang === 'ar' ? 'سحب' : 'Withdrawal'}
+            {lang === 'ku' ? 'ڕاکێشانی پارە' : lang === 'ar' ? 'سحب' : 'Withdraw'}
           </button>
-          <button onClick={() => { setPrimaryAccId(accounts[0]?.id || ''); setTargetAccId(accounts[1]?.id || accounts[0]?.id || ''); setModal('TRANSFER'); }} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-teal-600 text-white text-xs font-bold">
+          <button onClick={() => openModal('TRANSFER')} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-black shadow transition">
             <ArrowLeftRight className="w-4 h-4" />
             {lang === 'ku' ? 'گواستنەوە' : lang === 'ar' ? 'تحويل' : 'Transfer'}
           </button>
-          <button onClick={() => { setPrimaryAccId(accounts[0]?.id || ''); setModal('RECONCILE'); }} className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-500/15 text-amber-500 border border-amber-500/30 text-xs font-bold">
+          <button onClick={() => openModal('RECONCILE')} className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-500/15 text-amber-500 border border-amber-500/30 text-xs font-bold">
             <Scale className="w-3.5 h-3.5" />
             {lang === 'ku' ? 'ڕێکخستنی باڵانس' : lang === 'ar' ? 'مطابقة' : 'Reconcile'}
           </button>
-          <button onClick={() => setModal('NEW_ACCOUNT')} className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold">
-            <Plus className="w-3.5 h-3.5" />
+          <button
+            onClick={() => openModal('NEW_ACCOUNT')}
+            className="flex items-center gap-1 px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:bg-slate-200 dark:hover:bg-charcoal-700 text-xs font-bold"
+          >
+            <Plus className="w-3.5 h-3.5 text-emerald-500" />
+            {lang === 'ku' ? 'هەژماری نوێ' : lang === 'ar' ? 'حساب جديد' : 'New Account'}
           </button>
         </div>
       </div>
 
+      {/* Clickable Account Cards — Click any Safe/Bank to filter its transactions! */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {accounts.map((acc: any) => (
-          <div key={acc.id} className="bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm space-y-3">
-            <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
-              <span>{acc.code}</span>
-              <span className={`px-2 py-0.5 rounded font-bold ${acc.type === 'BANK_ACCOUNT' ? 'bg-teal-500/15 text-teal-400' : 'bg-emerald-500/15 text-emerald-500'}`}>
-                {acc.type === 'BANK_ACCOUNT' ? 'BANK' : 'SAFE'}
-              </span>
-            </div>
-            <div className="font-bold text-sm text-slate-900 dark:text-white">{locName(acc, lang)}</div>
-            <div className="pt-2 border-t border-slate-100 dark:border-charcoal-800 text-xl font-black text-emerald-500">
-              {fmtIqd(acc.balanceIqd, lang)}
-            </div>
-          </div>
-        ))}
+        {accounts.map((acc: any) => {
+          const isSelected = selectedAccFilter === acc.id;
+          return (
+            <button
+              key={acc.id}
+              type="button"
+              onClick={() => setSelectedAccFilter(isSelected ? 'ALL' : acc.id)}
+              className={`text-start p-5 rounded-2xl border shadow-sm space-y-3 transition ${
+                isSelected
+                  ? 'bg-emerald-500/10 border-emerald-500/60'
+                  : 'bg-white dark:bg-charcoal-900 border-slate-200 dark:border-charcoal-800 hover:border-emerald-500/40'
+              }`}
+            >
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-mono text-slate-400">{acc.code}</span>
+                <span className={`px-2 py-0.5 rounded font-bold ${acc.type === 'BANK_ACCOUNT' ? 'bg-teal-500/15 text-teal-400' : 'bg-emerald-500/15 text-emerald-500'}`}>
+                  {acc.type === 'BANK_ACCOUNT'
+                    ? (lang === 'ku' ? 'بانک' : lang === 'ar' ? 'بنك' : 'Bank')
+                    : (lang === 'ku' ? 'قاسە' : lang === 'ar' ? 'صندوق' : 'Safe')}
+                </span>
+              </div>
+              <div className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-emerald-500 shrink-0" />
+                <span className="truncate">{locName(acc, lang)}</span>
+              </div>
+              <div className="pt-2 border-t border-slate-100 dark:border-charcoal-800 text-xl font-black text-emerald-500">
+                {fmtIqd(acc.balanceIqd, lang)}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex justify-between items-center">
-          <h3 className="text-sm font-black">{t.dashboard.recentActivity}</h3>
+        <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex flex-wrap justify-between items-center gap-3">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-black">{t.dashboard.recentActivity} ({filteredTransactions.length})</h3>
+            {selectedAccFilter !== 'ALL' && (
+              <button
+                onClick={() => setSelectedAccFilter('ALL')}
+                className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-500 text-xs font-bold"
+              >
+                {lang === 'ku' ? 'پیشاندانی هەموو ↺' : lang === 'ar' ? 'عرض الكل ↺' : 'Show All ↺'}
+              </button>
+            )}
+          </div>
           <button
             onClick={() =>
               exportToCsv(
                 'cash-bank-iqd',
                 ['Tx #', 'Date', 'Account', 'Type', 'Direction', 'Amount IQD', 'Description'],
-                transactions.map((tx: any) => [tx.transactionNumber, new Date(tx.date).toISOString().slice(0, 10), locName(tx.financialAccount, lang), tx.type, tx.direction, tx.amountIqd, tx.description])
+                filteredTransactions.map((tx: any) => [
+                  tx.transactionNumber,
+                  tx.date ? new Date(tx.date).toISOString().slice(0, 10) : '',
+                  tx.financialAccount ? locName(tx.financialAccount, lang) : '',
+                  tx.type,
+                  tx.direction,
+                  tx.amountIqd,
+                  tx.description,
+                ])
               )
             }
             className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold"
           >
-            <Download className="w-3.5 h-3.5" /> {t.exportCsv}
+            <Download className="w-3.5 h-3.5" /> Excel
           </button>
         </div>
         <div className="overflow-x-auto">
@@ -183,65 +264,115 @@ export function CashBankModuleView({
                 <th className="py-3 px-4 text-start">{t.nav.cashbank}</th>
                 <th className="py-3 px-4 text-start">{t.description}</th>
                 <th className="py-3 px-4 text-end">{t.amount}</th>
-                <th className="py-3 px-4 text-end">Balance</th>
+                <th className="py-3 px-4 text-end">{lang === 'ku' ? 'باڵانسی نوێ' : lang === 'ar' ? 'الرصيد بعد' : 'Balance'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-              {transactions.map((tx: any) => (
-                <tr key={tx.id}>
-                  <td className="py-2.5 px-4 font-mono font-bold text-emerald-500">{tx.transactionNumber}</td>
-                  <td className="py-2.5 px-4 text-slate-500">{new Date(tx.date).toLocaleDateString()}</td>
-                  <td className="py-2.5 px-4 font-semibold">{locName(tx.financialAccount, lang)}</td>
-                  <td className="py-2.5 px-4 text-slate-500">{tx.description}</td>
-                  <td className={`py-2.5 px-4 text-end font-black ${tx.direction === 'IN' ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {tx.direction === 'IN' ? '+' : '-'}{fmtIqd(tx.amountIqd, lang)}
-                  </td>
-                  <td className="py-2.5 px-4 text-end font-bold">{fmtIqd(tx.balanceAfterIqd, lang)}</td>
+              {filteredTransactions.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-slate-400">{t.noData}</td>
                 </tr>
-              ))}
+              ) : (
+                filteredTransactions.map((tx: any) => (
+                  <tr key={tx.id} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
+                    <td className="py-2.5 px-4 font-mono font-bold text-emerald-500">{tx.transactionNumber}</td>
+                    <td className="py-2.5 px-4 text-slate-500">{tx.date ? new Date(tx.date).toLocaleDateString() : '—'}</td>
+                    <td className="py-2.5 px-4 font-semibold">{tx.financialAccount ? locName(tx.financialAccount, lang) : '—'}</td>
+                    <td className="py-2.5 px-4 text-slate-500">{tx.description}</td>
+                    <td className={`py-2.5 px-4 text-end font-black ${tx.direction === 'IN' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      {tx.direction === 'IN' ? '+' : '-'}{fmtIqd(tx.amountIqd, lang)}
+                    </td>
+                    <td className="py-2.5 px-4 text-end font-bold">{fmtIqd(tx.balanceAfterIqd, lang)}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
-          <form onSubmit={handleActionSubmit} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4">
-            <h3 className="text-base font-black">{modal}</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 overflow-y-auto">
+          <form onSubmit={handleActionSubmit} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 my-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black">{modalTitle(modal)}</h3>
+              <button type="button" onClick={() => setModal(null)} className="p-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-slate-400">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
             {modal !== 'NEW_ACCOUNT' ? (
               <>
-                <select value={primaryAccId} onChange={(e) => setPrimaryAccId(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs">
-                  {accounts.map((a: any) => <option key={a.id} value={a.id}>{locName(a, lang)} ({fmtIqd(a.balanceIqd, lang)})</option>)}
-                </select>
-                {modal === 'TRANSFER' && (
-                  <select value={targetAccId} onChange={(e) => setTargetAccId(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs">
-                    {accounts.map((a: any) => <option key={a.id} value={a.id}>{locName(a, lang)}</option>)}
+                <div>
+                  <label className="block text-xs font-bold mb-1">
+                    {modal === 'TRANSFER'
+                      ? (lang === 'ku' ? 'لە هەژماری:' : lang === 'ar' ? 'من حساب:' : 'From Account:')
+                      : t.nav.cashbank}
+                  </label>
+                  <select value={primaryAccId} onChange={(e) => setPrimaryAccId(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold">
+                    {accounts.map((a: any) => <option key={a.id} value={a.id}>{locName(a, lang)} ({fmtIqd(a.balanceIqd, lang)})</option>)}
                   </select>
+                </div>
+
+                {modal === 'TRANSFER' && (
+                  <div>
+                    <label className="block text-xs font-bold mb-1">
+                      {lang === 'ku' ? 'بۆ هەژماری:' : lang === 'ar' ? 'إلى حساب:' : 'To Account:'}
+                    </label>
+                    <select value={targetAccId} onChange={(e) => setTargetAccId(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold">
+                      {accounts.map((a: any) => <option key={a.id} value={a.id}>{locName(a, lang)} ({fmtIqd(a.balanceIqd, lang)})</option>)}
+                    </select>
+                  </div>
                 )}
-                <input type="number" step="any" required placeholder={t.amount} value={amountIqd} onChange={(e) => setAmountIqd(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-base font-black text-emerald-500" />
-                <input type="text" placeholder={t.notes} value={description} onChange={(e) => setDescription(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+
+                <div>
+                  <label className="block text-xs font-bold mb-1">
+                    {modal === 'RECONCILE'
+                      ? (lang === 'ku' ? 'باڵانسی ڕاستەقینەی ئێستا (د.ع) *' : lang === 'ar' ? 'الرصيد الفعلي الحالي (د.ع) *' : 'Actual Balance Now (IQD) *')
+                      : `${t.amount} *`}
+                  </label>
+                  <input type="number" step="any" min="0" required placeholder="0" value={amountIqd} onChange={(e) => setAmountIqd(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-base font-black text-emerald-500" />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold mb-1">{t.notes}</label>
+                  <input type="text" placeholder={lang === 'ku' ? 'تێبینی (ئارەزوومەندانە)...' : 'Notes (optional)...'} value={description} onChange={(e) => setDescription(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+                </div>
+
                 {modal === 'RECONCILE' && (
-                  <label className="flex items-center gap-2 text-xs">
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
                     <input type="checkbox" checked={postAdj} onChange={(e) => setPostAdj(e.target.checked)} className="rounded text-emerald-600" />
-                    <span>Auto-post adjustment journal</span>
+                    <span>{lang === 'ku' ? 'تۆمارکردنی قەیدی ڕێکخستن بە خۆکارانە' : lang === 'ar' ? 'ترحيل قيد التسوية تلقائياً' : 'Auto-post adjustment journal'}</span>
                   </label>
                 )}
               </>
             ) : (
               <>
-                <input type="text" required placeholder={t.employees.name} value={newAccName} onChange={(e) => setNewAccName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm" />
-                <select value={newAccType} onChange={(e) => setNewAccType(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs">
-                  <option value="CASH_REGISTER">Cash Safe</option>
-                  <option value="BANK_ACCOUNT">Bank Account</option>
-                </select>
+                <div>
+                  <label className="block text-xs font-bold mb-1">
+                    {lang === 'ku' ? 'ناوی قاسە یان بانک *' : lang === 'ar' ? 'اسم الصندوق أو البنك *' : 'Account Name *'}
+                  </label>
+                  <input type="text" required placeholder={lang === 'ku' ? 'نموونە: قاسەی دوکان، بانکی FIB...' : 'e.g. Main Safe, FIB Bank...'} value={newAccName} onChange={(e) => setNewAccName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">{lang === 'ku' ? 'جۆر' : lang === 'ar' ? 'النوع' : 'Type'}</label>
+                  <select value={newAccType} onChange={(e) => setNewAccType(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold">
+                    <option value="CASH_REGISTER">{lang === 'ku' ? 'قاسەی پارە (نەقد)' : lang === 'ar' ? 'صندوق نقدي' : 'Cash Safe'}</option>
+                    <option value="BANK_ACCOUNT">{lang === 'ku' ? 'هەژماری بانکی' : lang === 'ar' ? 'حساب بنكي' : 'Bank Account'}</option>
+                  </select>
+                </div>
                 {newAccType === 'BANK_ACCOUNT' && (
-                  <input type="text" placeholder="Bank Name" value={newAccBankName} onChange={(e) => setNewAccBankName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+                  <div>
+                    <label className="block text-xs font-bold mb-1">{lang === 'ku' ? 'ناوی بانک' : lang === 'ar' ? 'اسم البنك' : 'Bank Name'}</label>
+                    <input type="text" placeholder="FIB, FastPay, Cihan Bank..." value={newAccBankName} onChange={(e) => setNewAccBankName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
+                  </div>
                 )}
               </>
             )}
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setModal(null)} className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs">{t.cancel}</button>
-              <button type="submit" disabled={submitting} className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">{t.confirm}</button>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setModal(null)} className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold">{t.cancel}</button>
+              <button type="submit" disabled={submitting} className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black">{submitting ? t.saving : t.confirm}</button>
             </div>
           </form>
         </div>
@@ -319,13 +450,21 @@ export function AccountingEngineModuleView({
         setTab('JOURNALS');
         await onRefresh();
       }
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const lblCode = lang === 'ku' ? 'کۆد' : lang === 'ar' ? 'الرمز' : 'Code';
+  const lblAccount = lang === 'ku' ? 'هەژمار' : lang === 'ar' ? 'الحساب' : 'Account';
+  const lblBalance = lang === 'ku' ? 'باڵانس' : lang === 'ar' ? 'الرصيد' : 'Balance';
+  const lblBalanced = lang === 'ku' ? '✓ هاوسەنگە' : lang === 'ar' ? '✓ متوازن' : '✓ Balanced';
+  const lblUnbalanced = lang === 'ku' ? '✕ ناهاوسەنگە' : lang === 'ar' ? '✕ غير متوازن' : '✕ Unbalanced';
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm">
         <h2 className="text-xl font-black flex items-center gap-2.5 text-slate-900 dark:text-white">
           <BookOpen className="w-6 h-6 text-emerald-500" />
@@ -350,8 +489,8 @@ export function AccountingEngineModuleView({
           <button
             key={item.id}
             onClick={() => setTab(item.id as any)}
-            className={`px-4 py-2 rounded-xl text-xs font-bold ${
-              tab === item.id ? 'bg-emerald-600 text-white' : 'bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800'
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
+              tab === item.id ? 'bg-emerald-600 text-white shadow' : 'bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800'
             }`}
           >
             {item.label}
@@ -364,15 +503,15 @@ export function AccountingEngineModuleView({
           <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex justify-between items-center">
             <h3 className="text-sm font-black">{t.accounting.trialBalance}</h3>
             <span className={`px-3 py-1 rounded-full text-xs font-bold ${trialBalance.isBalanced ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-500'}`}>
-              {trialBalance.isBalanced ? '✓ Balanced' : '✕ Unbalanced'}
+              {trialBalance.isBalanced ? lblBalanced : lblUnbalanced}
             </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500">
                 <tr>
-                  <th className="py-3 px-4 text-start">Code</th>
-                  <th className="py-3 px-4 text-start">Account</th>
+                  <th className="py-3 px-4 text-start">{lblCode}</th>
+                  <th className="py-3 px-4 text-start">{lblAccount}</th>
                   <th className="py-3 px-4 text-end">{t.accounting.debit}</th>
                   <th className="py-3 px-4 text-end">{t.accounting.credit}</th>
                 </tr>
@@ -402,7 +541,9 @@ export function AccountingEngineModuleView({
       {tab === 'BALANCE_SHEET' && balanceSheet && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
           <div className="bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 space-y-2">
-            <h4 className="font-black text-sm text-emerald-500 border-b border-slate-200 dark:border-charcoal-800 pb-2">Assets / سامانەکان</h4>
+            <h4 className="font-black text-sm text-emerald-500 border-b border-slate-200 dark:border-charcoal-800 pb-2">
+              {lang === 'ku' ? 'سامانەکان (Assets)' : lang === 'ar' ? 'الأصول (Assets)' : 'Assets'}
+            </h4>
             {(balanceSheet.assets || []).map((a: any) => (
               <div key={a.code} className="flex justify-between py-1">
                 <span><b className="font-mono text-emerald-500 me-1.5">{a.code}</b>{locName(a, lang)}</span>
@@ -410,13 +551,15 @@ export function AccountingEngineModuleView({
               </div>
             ))}
             <div className="flex justify-between text-sm font-black border-t-2 border-emerald-500 pt-2">
-              <span>TOTAL ASSETS</span>
+              <span>{lang === 'ku' ? 'کۆی سامانەکان' : lang === 'ar' ? 'إجمالي الأصول' : 'TOTAL ASSETS'}</span>
               <span className="text-emerald-500">{fmtIqd(balanceSheet.totalAssetsIqd, lang)}</span>
             </div>
           </div>
 
           <div className="bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 space-y-3">
-            <h4 className="font-black text-sm text-rose-500 border-b border-slate-200 dark:border-charcoal-800 pb-2">Liabilities & Equity</h4>
+            <h4 className="font-black text-sm text-rose-500 border-b border-slate-200 dark:border-charcoal-800 pb-2">
+              {lang === 'ku' ? 'پابەندبوون و سەرمایە (Liabilities & Equity)' : lang === 'ar' ? 'الالتزامات وحقوق الملكية' : 'Liabilities & Equity'}
+            </h4>
             {(balanceSheet.liabilities || []).map((l: any) => (
               <div key={l.code} className="flex justify-between py-1">
                 <span><b className="font-mono text-rose-500 me-1.5">{l.code}</b>{locName(l, lang)}</span>
@@ -430,7 +573,7 @@ export function AccountingEngineModuleView({
               </div>
             ))}
             <div className="flex justify-between text-sm font-black border-t-2 border-emerald-500 pt-2">
-              <span>TOTAL L + E {balanceSheet.isBalanced ? '✓' : ''}</span>
+              <span>{lang === 'ku' ? 'کۆی پابەندبوون و سەرمایە' : lang === 'ar' ? 'الإجمالي' : 'TOTAL L + E'} {balanceSheet.isBalanced ? '✓' : ''}</span>
               <span className="text-emerald-500">{fmtIqd(balanceSheet.totalLiabilitiesAndEquityIqd, lang)}</span>
             </div>
           </div>
@@ -447,18 +590,23 @@ export function AccountingEngineModuleView({
                   <span className="font-semibold">{jrn.description}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-slate-400">{new Date(jrn.date).toLocaleDateString()}</span>
+                  <span className="text-slate-400">{jrn.date ? new Date(jrn.date).toLocaleDateString() : '—'}</span>
                   {jrn.status === 'POSTED' && jrn.referenceType !== 'REVERSAL' && (
                     <button
                       onClick={async () => {
-                        const res = await fetch('/api/accounting', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ action: 'reverseJournal', journalEntryId: jrn.id, reason: 'Manual reversal' }),
-                        });
-                        if (res.ok) {
-                          notify('success', `${jrn.entryNumber} reversed`);
-                          await onRefresh();
+                        if (!window.confirm(`${t.accounting.reverseEntry} ${jrn.entryNumber}?`)) return;
+                        try {
+                          const res = await fetch('/api/accounting', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'reverseJournal', journalEntryId: jrn.id, reason: 'Manual reversal' }),
+                          });
+                          if (res.ok) {
+                            notify('success', `${jrn.entryNumber} ✓`);
+                            await onRefresh();
+                          } else notify('error', (await res.json()).error || 'Failed');
+                        } catch (err: any) {
+                          notify('error', err?.message || 'Network error');
                         }
                       }}
                       className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-500 font-bold"
@@ -474,7 +622,7 @@ export function AccountingEngineModuleView({
                     <tr key={line.id}>
                       <td className="py-1 font-semibold">
                         <span className="font-mono text-emerald-500 me-1.5">{line.account?.code}</span>
-                        {locName(line.account, lang)}
+                        {line.account ? locName(line.account, lang) : '—'}
                       </td>
                       <td className="py-1 text-end font-mono font-bold w-36">{Number(line.debitIqd) > 0 ? fmtIqd(line.debitIqd, lang) : '—'}</td>
                       <td className="py-1 text-end font-mono font-bold w-36">{Number(line.creditIqd) > 0 ? fmtIqd(line.creditIqd, lang) : '—'}</td>
@@ -502,10 +650,10 @@ export function AccountingEngineModuleView({
                 <tr>
                   <th className="py-2.5 px-4 text-start">{t.date}</th>
                   <th className="py-2.5 px-4 text-start">#</th>
-                  <th className="py-2.5 px-4 text-start">Account</th>
+                  <th className="py-2.5 px-4 text-start">{lblAccount}</th>
                   <th className="py-2.5 px-4 text-end">{t.accounting.debit}</th>
                   <th className="py-2.5 px-4 text-end">{t.accounting.credit}</th>
-                  <th className="py-2.5 px-4 text-end">Balance</th>
+                  <th className="py-2.5 px-4 text-end">{lblBalance}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
@@ -513,7 +661,7 @@ export function AccountingEngineModuleView({
                   .filter((l: any) => selectedLedgerCode === 'ALL' || l.accountCode === selectedLedgerCode)
                   .map((l: any) => (
                     <tr key={l.lineId}>
-                      <td className="py-2 px-4 text-slate-500">{new Date(l.date).toLocaleDateString()}</td>
+                      <td className="py-2 px-4 text-slate-500">{l.date ? new Date(l.date).toLocaleDateString() : '—'}</td>
                       <td className="py-2 px-4 font-mono text-emerald-500">{l.entryNumber}</td>
                       <td className="py-2 px-4 font-semibold">{l.accountCode} — {lang === 'ku' ? l.accountNameKu : lang === 'ar' ? l.accountNameAr : l.accountNameEn}</td>
                       <td className="py-2 px-4 text-end font-mono">{l.debitIqd > 0 ? fmtIqd(l.debitIqd, lang) : '—'}</td>
@@ -532,10 +680,10 @@ export function AccountingEngineModuleView({
           <table className="w-full text-xs">
             <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500">
               <tr>
-                <th className="py-3 px-4 text-start">Code</th>
-                <th className="py-3 px-4 text-start">Account</th>
-                <th className="py-3 px-4 text-center">Type</th>
-                <th className="py-3 px-4 text-end">Balance</th>
+                <th className="py-3 px-4 text-start">{lblCode}</th>
+                <th className="py-3 px-4 text-start">{lblAccount}</th>
+                <th className="py-3 px-4 text-center">{lang === 'ku' ? 'جۆر' : lang === 'ar' ? 'النوع' : 'Type'}</th>
+                <th className="py-3 px-4 text-end">{lblBalance}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
@@ -560,17 +708,19 @@ export function AccountingEngineModuleView({
               <select value={line.accountId} onChange={(e) => { const c = [...jrnLines]; c[idx].accountId = e.target.value; setJrnLines(c); }} className="col-span-6 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs">
                 {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.code} — {locName(a, lang)}</option>)}
               </select>
-              <input type="number" min="0" placeholder="Debit IQD" value={line.debitIqd} onChange={(e) => { const c = [...jrnLines]; c[idx].debitIqd = e.target.value; if (Number(e.target.value) > 0) c[idx].creditIqd = '0'; setJrnLines(c); }} className="col-span-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs text-end font-mono" />
-              <input type="number" min="0" placeholder="Credit IQD" value={line.creditIqd} onChange={(e) => { const c = [...jrnLines]; c[idx].creditIqd = e.target.value; if (Number(e.target.value) > 0) c[idx].debitIqd = '0'; setJrnLines(c); }} className="col-span-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs text-end font-mono" />
+              <input type="number" min="0" placeholder={t.accounting.debit} value={line.debitIqd} onChange={(e) => { const c = [...jrnLines]; c[idx].debitIqd = e.target.value; if (Number(e.target.value) > 0) c[idx].creditIqd = '0'; setJrnLines(c); }} className="col-span-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs text-end font-mono" />
+              <input type="number" min="0" placeholder={t.accounting.credit} value={line.creditIqd} onChange={(e) => { const c = [...jrnLines]; c[idx].creditIqd = e.target.value; if (Number(e.target.value) > 0) c[idx].debitIqd = '0'; setJrnLines(c); }} className="col-span-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs text-end font-mono" />
             </div>
           ))}
-          <div className="flex justify-between items-center text-xs">
-            <button type="button" onClick={() => setJrnLines([...jrnLines, { accountId: accounts[0]?.id || '', debitIqd: '0', creditIqd: '0' }])} className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 font-bold">+ Line</button>
+          <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
+            <button type="button" onClick={() => setJrnLines([...jrnLines, { accountId: accounts[0]?.id || '', debitIqd: '0', creditIqd: '0' }])} className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 font-bold">
+              + {lang === 'ku' ? 'ڕیزی نوێ' : lang === 'ar' ? 'سطر جديد' : 'Add Line'}
+            </button>
             <div className="flex items-center gap-3 font-mono font-bold">
-              <span>D: {fmtIqd(manualTotals.debit, lang)}</span>
-              <span>C: {fmtIqd(manualTotals.credit, lang)}</span>
+              <span>{t.accounting.debit}: {fmtIqd(manualTotals.debit, lang)}</span>
+              <span>{t.accounting.credit}: {fmtIqd(manualTotals.credit, lang)}</span>
               <span className={manualTotals.isBalanced ? 'text-emerald-500' : 'text-rose-500'}>
-                {manualTotals.isBalanced ? '✓ Balanced' : '✕ Unbalanced'}
+                {manualTotals.isBalanced ? lblBalanced : lblUnbalanced}
               </span>
             </div>
           </div>
@@ -586,20 +736,30 @@ export function AccountingEngineModuleView({
             <div key={p.id} className="p-4 rounded-xl border border-slate-200 dark:border-charcoal-800 flex items-center justify-between">
               <div>
                 <div className="font-bold text-sm">{p.name}</div>
-                <div className="text-[11px] text-slate-400">{new Date(p.startDate).toLocaleDateString()} — {new Date(p.endDate).toLocaleDateString()}</div>
+                <div className="text-[11px] text-slate-400">
+                  {p.startDate ? new Date(p.startDate).toLocaleDateString() : ''} — {p.endDate ? new Date(p.endDate).toLocaleDateString() : ''}
+                </div>
               </div>
               <button
                 onClick={async () => {
-                  await fetch('/api/accounting', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'togglePeriodLock', periodId: p.id, isLocked: !p.isLocked }),
-                  });
-                  await onRefresh();
+                  try {
+                    const res = await fetch('/api/accounting', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ action: 'togglePeriodLock', periodId: p.id, isLocked: !p.isLocked }),
+                    });
+                    if (res.ok) {
+                      notify('success', `${p.name} ✓`);
+                      await onRefresh();
+                    } else notify('error', (await res.json()).error || 'Failed');
+                  } catch (err: any) {
+                    notify('error', err?.message || 'Network error');
+                  }
                 }}
                 className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold ${p.isLocked ? 'bg-rose-500/15 text-rose-500' : 'bg-emerald-500/15 text-emerald-500'}`}
               >
-                {p.isLocked ? <><Lock className="w-3.5 h-3.5" /> Locked</> : <><Unlock className="w-3.5 h-3.5" /> Open</>}
+                {p.isLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                {p.isLocked ? (lang === 'ku' ? 'داخراو' : 'Locked') : (lang === 'ku' ? 'کراوە' : 'Open')}
               </button>
             </div>
           ))}

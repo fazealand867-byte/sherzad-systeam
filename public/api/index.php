@@ -2823,6 +2823,44 @@ try {
             throw new Exception('Supplier not found.');
         }
 
+        if ($action === 'deleteCustomer') {
+            $cid = $body['customerId'] ?? '';
+            $cust = $engine->findById('customers', $cid);
+            if (!$cust) throw new Exception('Customer not found.');
+            if (abs((float)($cust['balanceIqd'] ?? 0)) > 0.01) {
+                throw new Exception("Cannot delete '{$cust['name']}' while they still have an unpaid balance.");
+            }
+            foreach ($engine->db['salesInvoices'] as $inv) {
+                if (($inv['customerId'] ?? '') === $cid) {
+                    throw new Exception("Cannot delete '{$cust['name']}' because they have existing sales invoices.");
+                }
+            }
+            $engine->db['customers'] = array_values(array_filter($engine->db['customers'], fn($c) => $c['id'] !== $cid));
+            $engine->logAudit('CUSTOMER_DELETED', 'PARTIES', 'Customer', $cid, "Deleted customer {$cust['name']}");
+            $engine->saveDatabase();
+            echo json_encode(['deleted' => true]);
+            exit;
+        }
+
+        if ($action === 'deleteSupplier') {
+            $sid = $body['supplierId'] ?? '';
+            $supp = $engine->findById('suppliers', $sid);
+            if (!$supp) throw new Exception('Supplier not found.');
+            if (abs((float)($supp['balanceIqd'] ?? 0)) > 0.01) {
+                throw new Exception("Cannot delete '{$supp['name']}' while there is an unpaid balance.");
+            }
+            foreach ($engine->db['purchaseInvoices'] as $inv) {
+                if (($inv['supplierId'] ?? '') === $sid) {
+                    throw new Exception("Cannot delete '{$supp['name']}' because they have existing purchase invoices.");
+                }
+            }
+            $engine->db['suppliers'] = array_values(array_filter($engine->db['suppliers'], fn($s) => $s['id'] !== $sid));
+            $engine->logAudit('SUPPLIER_DELETED', 'PARTIES', 'Supplier', $sid, "Deleted supplier {$supp['name']}");
+            $engine->saveDatabase();
+            echo json_encode(['deleted' => true]);
+            exit;
+        }
+
         if ($action === 'collectDebt') {
             $idem = $engine->checkIdempotency($body['idempotencyKey'] ?? null);
             if ($idem) { echo json_encode($idem); exit; }
