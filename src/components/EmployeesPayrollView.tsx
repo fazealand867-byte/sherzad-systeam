@@ -11,12 +11,12 @@ import {
   Search,
   Phone,
   Briefcase,
-  Shield,
   AlertCircle,
-  Check,
   CalendarOff,
   Plus,
   Minus,
+  XCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import {
@@ -25,7 +25,6 @@ import {
   currentMonthStr,
   makeIdempotencyKey,
 } from '@/lib/client-utils';
-import { ALL_PERMISSIONS } from '@/lib/auth';
 import { PrintableDocument } from './PrintModal';
 import { CustomDatePicker, CustomMonthPicker } from './CustomDatePicker';
 
@@ -43,33 +42,29 @@ interface EmployeesPayrollProps {
 export function EmployeesPayrollView({
   lang,
   employeesData,
-  settingsData,
   financialAccounts,
-  currentUserRole = 'SUPER_ADMIN',
   onRefresh,
   onPrint,
   notify,
 }: EmployeesPayrollProps) {
   const t = translations[lang];
-  const [tab, setTab] = useState<'EMPLOYEES' | 'OFF_DAYS' | 'HISTORY' | 'SYSTEM_USERS'>('EMPLOYEES');
+  const [tab, setTab] = useState<'EMPLOYEES' | 'OFF_DAYS' | 'HISTORY'>('EMPLOYEES');
   const [selectedMonth, setSelectedMonth] = useState(currentMonthStr());
   const [monthData, setMonthData] = useState<any>(employeesData);
   const [search, setSearch] = useState('');
   const [historyEmpFilter, setHistoryEmpFilter] = useState('ALL');
   const [submitting, setSubmitting] = useState(false);
 
-  // Add/Edit Employee Modal
+  // Simple Add/Edit Employee Modal
   const [showEmpModal, setShowEmpModal] = useState(false);
   const [editingEmpId, setEditingEmpId] = useState<string | null>(null);
   const [empName, setEmpName] = useState('');
   const [empPhone, setEmpPhone] = useState('');
   const [empPosition, setEmpPosition] = useState('');
   const [empSalary, setEmpSalary] = useState('');
-  const [empStartDate, setEmpStartDate] = useState(todayDateStr());
   const [empStatus, setEmpStatus] = useState<'ACTIVE' | 'ON_LEAVE' | 'INACTIVE'>('ACTIVE');
-  const [empNotes, setEmpNotes] = useState('');
 
-  // Quick Pay Salary Modal
+  // Quick Pay Salary Modal (with inline Off Days + Optional Deduction)
   const [payTarget, setPayTarget] = useState<any | null>(null);
   const [payAmount, setPayAmount] = useState('');
   const [payType, setPayType] = useState<'FULL' | 'PARTIAL' | 'ADVANCE'>('FULL');
@@ -81,21 +76,13 @@ export function EmployeesPayrollView({
   const [payHasDeduction, setPayHasDeduction] = useState(false);
   const [payDeductionIqd, setPayDeductionIqd] = useState('');
 
-  // Off Days & Optional Deduction Modal
+  // Standalone Off Days & Optional Deduction Modal
   const [offTarget, setOffTarget] = useState<any | null>(null);
   const [offDaysCount, setOffDaysCount] = useState('1');
   const [offDate, setOffDate] = useState(todayDateStr());
   const [offHasDeduction, setOffHasDeduction] = useState(false);
   const [offDeductionIqd, setOffDeductionIqd] = useState('');
   const [offReason, setOffReason] = useState('');
-
-  // Admin System Users state
-  const [selectedRoleMatrix, setSelectedRoleMatrix] = useState('SALES_EMPLOYEE');
-  const [showNewUser, setShowNewUser] = useState(false);
-  const [uName, setUName] = useState('');
-  const [uUsername, setUUsername] = useState('');
-  const [uEmail, setUEmail] = useState('');
-  const [uRole, setURole] = useState('SALES_EMPLOYEE');
 
   useEffect(() => {
     if (employeesData && (!employeesData.month || employeesData.month === selectedMonth)) {
@@ -125,6 +112,52 @@ export function EmployeesPayrollView({
     totalRemainingIqd: 0,
   };
 
+  const payTypeLabel = (pt: string) => {
+    if (pt === 'FULL') return t.expenses.fullPayment;
+    if (pt === 'PARTIAL') return t.expenses.partialPayment;
+    if (pt === 'ADVANCE') return t.expenses.advancePayment;
+    return pt;
+  };
+
+  const openAddEmployee = () => {
+    setEditingEmpId(null);
+    setEmpName('');
+    setEmpPhone('');
+    setEmpPosition('');
+    setEmpSalary('');
+    setEmpStatus('ACTIVE');
+    setShowEmpModal(true);
+  };
+
+  const openEditEmployee = (emp: any) => {
+    setEditingEmpId(emp.id);
+    setEmpName(emp.name || '');
+    setEmpPhone(emp.phone || '');
+    setEmpPosition(emp.position || '');
+    setEmpSalary(String(emp.monthlySalaryIqd || ''));
+    setEmpStatus(emp.status || 'ACTIVE');
+    setShowEmpModal(true);
+  };
+
+  const openPaySalary = (emp: any) => {
+    setPayTarget(emp);
+    setPayIdemKey(makeIdempotencyKey('sal'));
+    setDupWarning(null);
+    setPayDate(todayDateStr());
+    setPayNotes('');
+    setPayOffDays('0');
+    setPayHasDeduction(false);
+    setPayDeductionIqd('');
+    const rem = Number(emp.remainingSalaryIqd || 0);
+    if (rem > 0) {
+      setPayAmount(String(rem));
+      setPayType('FULL');
+    } else {
+      setPayAmount('');
+      setPayType('ADVANCE');
+    }
+  };
+
   const openOffDaysModal = (emp: any) => {
     setOffTarget(emp);
     setOffDaysCount('1');
@@ -133,6 +166,141 @@ export function EmployeesPayrollView({
     const dailyRate = Math.round(Number(emp.monthlySalaryIqd || 0) / 30);
     setOffDeductionIqd(dailyRate > 0 ? String(dailyRate) : '');
     setOffReason('');
+  };
+
+  const recalcPayModalDeduction = (emp: any, daysVal: string, deductOn: boolean, customDed?: string) => {
+    const days = Math.max(0, Number(daysVal || 0));
+    const monthly = Number(emp?.monthlySalaryIqd || 0);
+    const baseRem = Number(emp?.remainingSalaryIqd || monthly || 0);
+    let ded = 0;
+    if (deductOn && days > 0) {
+      if (customDed !== undefined) {
+        ded = Math.max(0, Math.round(Number(customDed || 0)));
+      } else {
+        ded = monthly > 0 ? Math.round((monthly / 30) * days) : 0;
+        setPayDeductionIqd(ded > 0 ? String(ded) : '');
+      }
+    }
+    if (payType === 'FULL' && baseRem > 0) {
+      setPayAmount(String(Math.max(0, baseRem - ded)));
+    }
+  };
+
+  const handleSaveEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!empName.trim() || !empPhone.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/employees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          editingEmpId
+            ? {
+                action: 'updateEmployee',
+                employeeId: editingEmpId,
+                name: empName.trim(),
+                phone: empPhone.trim(),
+                position: empPosition.trim() || null,
+                monthlySalaryIqd: Math.max(0, Number(empSalary || 0)),
+                status: empStatus,
+              }
+            : {
+                action: 'createEmployee',
+                name: empName.trim(),
+                phone: empPhone.trim(),
+                position: empPosition.trim() || null,
+                monthlySalaryIqd: Math.max(0, Number(empSalary || 0)),
+                startDate: todayDateStr(),
+                status: 'ACTIVE',
+              }
+        ),
+      });
+      const data = await res.json();
+      if (!res.ok) notify('error', data.error || 'Could not save employee');
+      else {
+        notify('success', `${data.employee.name} ✓`);
+        setShowEmpModal(false);
+        await onRefresh();
+        await reloadMonth(selectedMonth);
+      }
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handlePaySalary = async (confirmDuplicate = false) => {
+    if (!payTarget) return;
+    if (!Number(payAmount) || Number(payAmount) <= 0) {
+      notify('error', lang === 'ku' ? 'تکایە بڕی پارە بنووسە' : 'Please enter a valid payment amount');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const offDaysNum = Math.max(0, Number(payOffDays || 0));
+      const dedNum = payHasDeduction && offDaysNum > 0 ? Math.max(0, Math.round(Number(payDeductionIqd || 0))) : 0;
+
+      // Record salary payment FIRST so a 409 duplicate prompt doesn't double-create off days!
+      const res = await fetch('/api/employees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'paySalary',
+          employeeId: payTarget.id,
+          amountIqd: Number(payAmount),
+          paymentType: payType,
+          salaryMonth: selectedMonth,
+          date: payDate,
+          notes:
+            offDaysNum > 0
+              ? `${payNotes.trim() ? payNotes.trim() + ' — ' : ''}${offDaysNum} ${lang === 'ku' ? 'ڕۆژ مۆڵەت' : lang === 'ar' ? 'يوم إجازة' : 'day(s) off'}${dedNum > 0 ? ` (-${fmtIqd(dedNum, lang)})` : ''}`
+              : (payNotes.trim() || undefined),
+          financialAccountId: financialAccounts[0]?.id,
+          idempotencyKey: payIdemKey,
+          confirmDuplicate,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 409 && data.code === 'POSSIBLE_DUPLICATE') {
+        setDupWarning(data.error);
+        return;
+      }
+      if (!res.ok) {
+        notify('error', data.error || 'Salary payment failed');
+        return;
+      }
+
+      // Now that salary payment succeeded, record any inline off days cleanly
+      if (offDaysNum > 0) {
+        await fetch('/api/employees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'recordOffDays',
+            employeeId: payTarget.id,
+            salaryMonth: selectedMonth,
+            date: payDate,
+            days: offDaysNum,
+            hasDeduction: payHasDeduction && dedNum > 0,
+            deductionIqd: dedNum,
+            reason: payNotes.trim() || undefined,
+          }),
+        });
+      }
+
+      notify('success', `${data.salaryPayment.receiptNumber} — ${fmtIqd(data.salaryPayment.amountIqd, lang)} ✓`);
+      setPayTarget(null);
+      setDupWarning(null);
+      onPrint({ type: 'SALARY_RECEIPT', mode: 'A4', data: data.salaryPayment });
+      await onRefresh();
+      await reloadMonth(selectedMonth);
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleSaveOffDays = async (e: React.FormEvent) => {
@@ -188,179 +356,11 @@ export function EmployeesPayrollView({
         notify('success', '✓');
         await onRefresh();
         await reloadMonth(selectedMonth);
-      }
-    } catch {}
-  };
-
-  const openAddEmployee = () => {
-    setEditingEmpId(null);
-    setEmpName('');
-    setEmpPhone('');
-    setEmpPosition('');
-    setEmpSalary('');
-    setEmpStartDate(todayDateStr());
-    setEmpStatus('ACTIVE');
-    setEmpNotes('');
-    setShowEmpModal(true);
-  };
-
-  const openEditEmployee = (emp: any) => {
-    setEditingEmpId(emp.id);
-    setEmpName(emp.name);
-    setEmpPhone(emp.phone || '');
-    setEmpPosition(emp.position || '');
-    setEmpSalary(String(emp.monthlySalaryIqd || ''));
-    setEmpStartDate(emp.startDate || todayDateStr());
-    setEmpStatus(emp.status || 'ACTIVE');
-    setEmpNotes(emp.notes || '');
-    setShowEmpModal(true);
-  };
-
-  const openPaySalary = (emp: any) => {
-    setPayTarget(emp);
-    setPayIdemKey(makeIdempotencyKey('sal'));
-    setDupWarning(null);
-    setPayDate(todayDateStr());
-    setPayNotes('');
-    setPayOffDays('0');
-    setPayHasDeduction(false);
-    setPayDeductionIqd('');
-    const rem = Number(emp.remainingSalaryIqd || 0);
-    if (rem > 0) {
-      setPayAmount(String(rem));
-      setPayType('FULL');
-    } else {
-      setPayAmount('');
-      setPayType('ADVANCE');
-    }
-  };
-
-  const recalcPayModalDeduction = (emp: any, daysVal: string, deductOn: boolean, customDed?: string) => {
-    const days = Math.max(0, Number(daysVal || 0));
-    const monthly = Number(emp?.monthlySalaryIqd || 0);
-    const baseRem = Number(emp?.remainingSalaryIqd || monthly || 0);
-    let ded = 0;
-    if (deductOn && days > 0) {
-      if (customDed !== undefined) {
-        ded = Math.max(0, Math.round(Number(customDed || 0)));
       } else {
-        ded = monthly > 0 ? Math.round((monthly / 30) * days) : 0;
-        setPayDeductionIqd(ded > 0 ? String(ded) : '');
-      }
-    }
-    if (payType === 'FULL' && baseRem > 0) {
-      setPayAmount(String(Math.max(0, baseRem - ded)));
-    }
-  };
-
-  const handleSaveEmployee = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!empName.trim() || !empPhone.trim()) return;
-    setSubmitting(true);
-    try {
-      const res = await fetch('/api/employees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          editingEmpId
-            ? {
-                action: 'updateEmployee',
-                employeeId: editingEmpId,
-                name: empName.trim(),
-                phone: empPhone.trim(),
-                position: empPosition.trim() || null,
-                monthlySalaryIqd: Number(empSalary || 0),
-                startDate: empStartDate || null,
-                status: empStatus,
-                notes: empNotes.trim() || null,
-              }
-            : {
-                action: 'createEmployee',
-                name: empName.trim(),
-                phone: empPhone.trim(),
-                position: empPosition.trim() || null,
-                monthlySalaryIqd: Number(empSalary || 0),
-                startDate: empStartDate || null,
-                status: empStatus,
-                notes: empNotes.trim() || null,
-              }
-        ),
-      });
-      const data = await res.json();
-      if (!res.ok) notify('error', data.error || 'Could not save employee');
-      else {
-        notify('success', `${data.employee.name} ✓`);
-        setShowEmpModal(false);
-        await onRefresh();
-        if (selectedMonth !== currentMonthStr()) await reloadMonth(selectedMonth);
+        notify('error', (await res.json()).error || 'Could not delete');
       }
     } catch (err: any) {
       notify('error', err?.message || 'Network error');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handlePaySalary = async (confirmDuplicate = false) => {
-    if (!payTarget || Number(payAmount) <= 0) return;
-    setSubmitting(true);
-    try {
-      const offDaysNum = Math.max(0, Number(payOffDays || 0));
-      const dedNum = payHasDeduction && offDaysNum > 0 ? Math.max(0, Math.round(Number(payDeductionIqd || 0))) : 0;
-      if (offDaysNum > 0 && !confirmDuplicate) {
-        await fetch('/api/employees', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'recordOffDays',
-            employeeId: payTarget.id,
-            salaryMonth: selectedMonth,
-            date: payDate,
-            days: offDaysNum,
-            hasDeduction: payHasDeduction && dedNum > 0,
-            deductionIqd: dedNum,
-            reason: payNotes.trim() || undefined,
-          }),
-        });
-      }
-
-      const res = await fetch('/api/employees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'paySalary',
-          employeeId: payTarget.id,
-          amountIqd: Number(payAmount),
-          paymentType: payType,
-          salaryMonth: selectedMonth,
-          date: payDate,
-          notes:
-            offDaysNum > 0
-              ? `${payNotes.trim() ? payNotes.trim() + ' — ' : ''}${offDaysNum} ${lang === 'ku' ? 'ڕۆژ مۆڵەت' : lang === 'ar' ? 'يوم إجازة' : 'day(s) off'}${dedNum > 0 ? ` (-${fmtIqd(dedNum, lang)})` : ''}`
-              : (payNotes.trim() || undefined),
-          financialAccountId: financialAccounts[0]?.id,
-          idempotencyKey: payIdemKey,
-          confirmDuplicate,
-        }),
-      });
-      const data = await res.json();
-      if (res.status === 409 && data.code === 'POSSIBLE_DUPLICATE') {
-        setDupWarning(data.error);
-        return;
-      }
-      if (!res.ok) notify('error', data.error || 'Salary payment failed');
-      else {
-        notify('success', `${data.salaryPayment.receiptNumber} — ${fmtIqd(data.salaryPayment.amountIqd, lang)} ✓`);
-        setPayTarget(null);
-        setDupWarning(null);
-        onPrint({ type: 'SALARY_RECEIPT', mode: 'A4', data: data.salaryPayment });
-        await onRefresh();
-        if (selectedMonth !== currentMonthStr()) await reloadMonth(selectedMonth);
-      }
-    } catch (err: any) {
-      notify('error', err?.message || 'Network error');
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -376,7 +376,7 @@ export function EmployeesPayrollView({
       if (res.ok) {
         notify('success', `${emp.name} ✓`);
         await onRefresh();
-        if (selectedMonth !== currentMonthStr()) await reloadMonth(selectedMonth);
+        await reloadMonth(selectedMonth);
       } else {
         notify('error', d.error || 'Cannot delete employee');
       }
@@ -403,15 +403,9 @@ export function EmployeesPayrollView({
     );
   }, [salaryPayments, historyEmpFilter]);
 
-  const isAdmin = currentUserRole === 'SUPER_ADMIN' || currentUserRole === 'BUSINESS_OWNER';
-  const users = settingsData?.users || [];
-  const rolePermissions = settingsData?.rolePermissions || [];
-  const activeRoleRecord = rolePermissions.find((rp: any) => rp.role === selectedRoleMatrix);
-  const currentRolePerms: string[] = activeRoleRecord?.permissions || [];
-
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="space-y-5">
+      {/* Clean Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-charcoal-900 p-5 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm">
         <div>
           <h2 className="text-xl font-black flex items-center gap-2.5 text-slate-900 dark:text-white">
@@ -430,7 +424,7 @@ export function EmployeesPayrollView({
           />
           <button
             onClick={openAddEmployee}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg shadow-emerald-600/25 transition"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow-lg shadow-emerald-600/25 transition"
           >
             <UserPlus className="w-4 h-4" />
             {t.employees.addEmployee}
@@ -439,7 +433,7 @@ export function EmployeesPayrollView({
       </div>
 
       {/* Monthly Payroll KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <div className="bg-white dark:bg-charcoal-900 p-4 rounded-2xl border border-slate-200 dark:border-charcoal-800">
           <div className="text-xs text-slate-400">{t.employees.directoryTab}</div>
           <div className="text-2xl font-black mt-1">{summary.activeEmployees}</div>
@@ -451,7 +445,7 @@ export function EmployeesPayrollView({
           </div>
         </div>
         <div className="bg-white dark:bg-charcoal-900 p-4 rounded-2xl border border-slate-200 dark:border-charcoal-800">
-          <div className="text-xs text-slate-400">{t.employees.paidThisMonth} ({selectedMonth})</div>
+          <div className="text-xs text-slate-400">{t.employees.paidThisMonth}</div>
           <div className="text-xl font-black text-emerald-500 mt-1">
             {fmtIqd(summary.totalPaidIqd, lang)}
           </div>
@@ -464,22 +458,22 @@ export function EmployeesPayrollView({
         </div>
       </div>
 
-      {/* Tabs Card */}
+      {/* Clean 3-Tab Card (Employees | Off Days | Payment History) */}
       <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setTab('EMPLOYEES')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold ${
-                tab === 'EMPLOYEES' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
+                tab === 'EMPLOYEES' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 dark:bg-charcoal-800'
               }`}
             >
               {t.employees.directoryTab} ({employees.length})
             </button>
             <button
               onClick={() => setTab('OFF_DAYS')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 ${
-                tab === 'OFF_DAYS' ? 'bg-amber-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'
+              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                tab === 'OFF_DAYS' ? 'bg-amber-600 text-white shadow' : 'bg-slate-100 dark:bg-charcoal-800'
               }`}
             >
               <CalendarOff className="w-3.5 h-3.5" />
@@ -487,27 +481,16 @@ export function EmployeesPayrollView({
             </button>
             <button
               onClick={() => setTab('HISTORY')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold ${
-                tab === 'HISTORY' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
+                tab === 'HISTORY' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 dark:bg-charcoal-800'
               }`}
             >
               {t.employees.historyTab} ({salaryPayments.length})
             </button>
-            {isAdmin && (
-              <button
-                onClick={() => setTab('SYSTEM_USERS')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 ${
-                  tab === 'SYSTEM_USERS' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'
-                }`}
-              >
-                <Shield className="w-3.5 h-3.5" />
-                {t.employees.systemUsersTab}
-              </button>
-            )}
           </div>
 
           {tab === 'EMPLOYEES' && (
-            <div className="relative w-64">
+            <div className="relative w-56 sm:w-64">
               <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
               <input
                 type="text"
@@ -540,100 +523,111 @@ export function EmployeesPayrollView({
               <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500 text-xs">
                 <tr>
                   <th className="py-3 px-4 text-start">{t.employees.name}</th>
-                  <th className="py-3 px-4 text-start">{t.employees.phone}</th>
                   <th className="py-3 px-4 text-end">{t.employees.monthlySalary}</th>
                   <th className="py-3 px-4 text-end">{t.employees.paidThisMonth}</th>
                   <th className="py-3 px-4 text-end">{t.employees.remainingThisMonth}</th>
-                  <th className="py-3 px-4 text-center">{t.status}</th>
                   <th className="py-3 px-4 text-center">{t.actions}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-                {filteredEmployees.map((emp: any) => (
-                  <tr key={emp.id} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
-                    <td className="py-3 px-4">
-                      <div className="font-bold text-slate-900 dark:text-white">{emp.name}</div>
-                      {emp.position && (
-                        <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                          <Briefcase className="w-3 h-3" /> {emp.position}
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 font-mono text-xs text-slate-600 dark:text-slate-300">
-                      <span className="flex items-center gap-1">
-                        <Phone className="w-3.5 h-3.5 text-emerald-500" /> {emp.phone}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-end font-semibold">
-                      <div>{Number(emp.monthlySalaryIqd) > 0 ? fmtIqd(emp.monthlySalaryIqd, lang) : '—'}</div>
-                      {(Number(emp.offDaysThisMonth || 0) > 0 || Number(emp.deductionsThisMonthIqd || 0) > 0) && (
-                        <div className="text-[11px] font-bold text-rose-500 mt-0.5">
-                          {emp.offDaysThisMonth}{' '}
-                          {lang === 'ku' ? 'ڕۆژ مۆڵەت' : lang === 'ar' ? 'يوم إجازة' : 'off'}
-                          {Number(emp.deductionsThisMonthIqd || 0) > 0
-                            ? ` (-${fmtIqd(emp.deductionsThisMonthIqd, lang)})`
-                            : ` (${lang === 'ku' ? 'بێ لێبڕین' : lang === 'ar' ? 'بدون خصم' : 'no deduction'})`}
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-end font-bold text-emerald-500">
-                      {fmtIqd(emp.paidThisMonthIqd, lang)}
-                    </td>
-                    <td className="py-3 px-4 text-end font-black text-amber-500">
-                      {Number(emp.monthlySalaryIqd) > 0 ? fmtIqd(emp.remainingSalaryIqd, lang) : '—'}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                          emp.status === 'ACTIVE'
-                            ? 'bg-emerald-500/15 text-emerald-500'
-                            : emp.status === 'ON_LEAVE'
-                            ? 'bg-amber-500/15 text-amber-500'
-                            : 'bg-slate-200 dark:bg-charcoal-800 text-slate-500'
-                        }`}
-                      >
-                        {(t.statuses as Record<string, string>)[emp.status] || emp.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <button
-                          onClick={() => openPaySalary(emp)}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shadow-sm"
-                        >
-                          <Banknote className="w-3.5 h-3.5" />
-                          {t.employees.paySalary}
-                        </button>
-                        <button
-                          onClick={() => openOffDaysModal(emp)}
-                          title={lang === 'ku' ? 'تۆمارکردنی مۆڵەت / نەهاتن' : lang === 'ar' ? 'تسجيل إجازة / غياب' : 'Record Off Days'}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 border border-amber-500/30 text-xs font-bold"
-                        >
-                          <CalendarOff className="w-3.5 h-3.5" />
-                          {lang === 'ku' ? 'مۆڵەت' : lang === 'ar' ? 'إجازة' : 'Off Day'}
-                        </button>
-                        <button
-                          onClick={() => openEditEmployee(emp)}
-                          className="p-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:text-emerald-500"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteEmployee(emp)}
-                          className="p-2 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500/20"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
+                {filteredEmployees.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-12 text-center text-slate-400">{t.noData}</td>
                   </tr>
-                ))}
+                ) : (
+                  filteredEmployees.map((emp: any) => {
+                    const isPaidFull = Number(emp.monthlySalaryIqd) > 0 && Number(emp.remainingSalaryIqd) <= 0;
+                    return (
+                      <tr key={emp.id} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-slate-900 dark:text-white">{emp.name}</span>
+                            {emp.status !== 'ACTIVE' && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-500">
+                                {(t.statuses as Record<string, string>)[emp.status] || emp.status}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mt-0.5">
+                            <span className="font-mono flex items-center gap-1">
+                              <Phone className="w-3 h-3 text-emerald-500" /> {emp.phone}
+                            </span>
+                            {emp.position && (
+                              <span className="flex items-center gap-1">
+                                <Briefcase className="w-3 h-3" /> {emp.position}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-end font-semibold">
+                          <div>{Number(emp.monthlySalaryIqd) > 0 ? fmtIqd(emp.monthlySalaryIqd, lang) : '—'}</div>
+                          {(Number(emp.offDaysThisMonth || 0) > 0 || Number(emp.deductionsThisMonthIqd || 0) > 0) && (
+                            <div className="text-[11px] font-bold text-rose-500 mt-0.5">
+                              {emp.offDaysThisMonth}{' '}
+                              {lang === 'ku' ? 'ڕۆژ مۆڵەت' : lang === 'ar' ? 'يوم إجازة' : 'off'}
+                              {Number(emp.deductionsThisMonthIqd || 0) > 0
+                                ? ` (-${fmtIqd(emp.deductionsThisMonthIqd, lang)})`
+                                : ` (${lang === 'ku' ? 'بێ لێبڕین' : lang === 'ar' ? 'بدون خصم' : 'no deduction'})`}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-end font-bold text-emerald-500">
+                          {fmtIqd(emp.paidThisMonthIqd, lang)}
+                        </td>
+                        <td className="py-3.5 px-4 text-end">
+                          {isPaidFull ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-500 text-xs font-black">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              {lang === 'ku' ? 'تەواو دراوە' : lang === 'ar' ? 'مدفوع بالكامل' : 'Paid'}
+                            </span>
+                          ) : (
+                            <span className="font-black text-amber-500">
+                              {Number(emp.monthlySalaryIqd) > 0 ? fmtIqd(emp.remainingSalaryIqd, lang) : '—'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => openPaySalary(emp)}
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shadow-sm transition"
+                            >
+                              <Banknote className="w-3.5 h-3.5" />
+                              {t.employees.paySalary}
+                            </button>
+                            <button
+                              onClick={() => openOffDaysModal(emp)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 border border-amber-500/30 text-xs font-bold transition"
+                            >
+                              <CalendarOff className="w-3.5 h-3.5" />
+                              {lang === 'ku' ? 'مۆڵەت' : lang === 'ar' ? 'إجازة' : 'Off Day'}
+                            </button>
+                            <button
+                              onClick={() => openEditEmployee(emp)}
+                              title={t.edit}
+                              className="p-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 hover:text-emerald-500 transition"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteEmployee(emp)}
+                              title={t.delete}
+                              className="p-2 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
         )}
 
-        {/* 1B. OFF DAYS & DEDUCTIONS LOG */}
+        {/* 2. OFF DAYS & DEDUCTIONS LOG */}
         {tab === 'OFF_DAYS' && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -657,7 +651,7 @@ export function EmployeesPayrollView({
                 ) : (
                   monthLeaves.map((lv: any) => (
                     <tr key={lv.id}>
-                      <td className="py-3 px-4 font-mono text-xs text-slate-500">{lv.date}</td>
+                      <td className="py-3 px-4 font-mono text-xs text-slate-500">{lv.date || '—'}</td>
                       <td className="py-3 px-4 font-bold">{lv.employeeName}</td>
                       <td className="py-3 px-4 text-center">
                         <span className="px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-500 text-xs font-black">
@@ -690,7 +684,7 @@ export function EmployeesPayrollView({
           </div>
         )}
 
-        {/* 2. SALARY PAYMENT HISTORY */}
+        {/* 3. SALARY PAYMENT HISTORY */}
         {tab === 'HISTORY' && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -715,7 +709,9 @@ export function EmployeesPayrollView({
                   filteredHistory.map((sp: any) => (
                     <tr key={sp.id}>
                       <td className="py-3 px-4 font-mono text-xs font-bold text-teal-500">{sp.receiptNumber}</td>
-                      <td className="py-3 px-4 text-xs text-slate-500">{new Date(sp.date).toLocaleDateString()}</td>
+                      <td className="py-3 px-4 text-xs text-slate-500">
+                        {sp.date ? new Date(sp.date).toLocaleDateString() : '—'}
+                      </td>
                       <td className="py-3 px-4">
                         <div className="font-bold">{sp.employeeName}</div>
                         <div className="text-xs font-mono text-slate-400">{sp.employeePhone}</div>
@@ -723,7 +719,7 @@ export function EmployeesPayrollView({
                       <td className="py-3 px-4 text-center font-mono text-xs font-bold">{sp.salaryMonth}</td>
                       <td className="py-3 px-4 text-center">
                         <span className="px-2.5 py-0.5 rounded-full bg-teal-500/15 text-teal-500 text-[11px] font-bold">
-                          {sp.paymentType}
+                          {payTypeLabel(sp.paymentType)}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-end font-black text-emerald-500">{fmtIqd(sp.amountIqd, lang)}</td>
@@ -746,144 +742,43 @@ export function EmployeesPayrollView({
             </table>
           </div>
         )}
-
-        {/* 3. ADMIN SYSTEM LOGIN USERS & RBAC (PRESERVED!) */}
-        {tab === 'SYSTEM_USERS' && isAdmin && (
-          <div className="p-5 space-y-6">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold">System Login Accounts ({users.length})</h3>
-              <button
-                onClick={() => setShowNewUser(true)}
-                className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
-              >
-                + Add Login User
-              </button>
-            </div>
-            <div className="overflow-x-auto border border-slate-200 dark:border-charcoal-800 rounded-xl">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-50 dark:bg-charcoal-950 text-slate-500">
-                  <tr>
-                    <th className="py-2.5 px-4 text-start">Name</th>
-                    <th className="py-2.5 px-4 text-start">Username / Email</th>
-                    <th className="py-2.5 px-4 text-center">Role</th>
-                    <th className="py-2.5 px-4 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-charcoal-800">
-                  {users.map((u: any) => (
-                    <tr key={u.id}>
-                      <td className="py-2.5 px-4 font-bold">{u.name}</td>
-                      <td className="py-2.5 px-4 text-slate-500">@{u.username} • {u.email}</td>
-                      <td className="py-2.5 px-4 text-center font-mono font-bold text-emerald-500">{u.role}</td>
-                      <td className="py-2.5 px-4 text-center">
-                        {u.role !== 'SUPER_ADMIN' ? (
-                          <button
-                            onClick={async () => {
-                              await fetch('/api/settings', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ action: 'toggleUserActive', userId: u.id, isActive: !u.isActive }),
-                              });
-                              await onRefresh();
-                            }}
-                            className={`px-2.5 py-1 rounded-lg font-bold ${
-                              u.isActive ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-500'
-                            }`}
-                          >
-                            {u.isActive ? 'ACTIVE' : 'INACTIVE'}
-                          </button>
-                        ) : (
-                          <span className="text-emerald-500 font-bold">ACTIVE</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="text-xs font-bold">Role Permissions Matrix</h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {['ACCOUNTANT', 'SALES_EMPLOYEE', 'INVENTORY_MANAGER', 'VIEWER'].map((r) => (
-                    <button
-                      key={r}
-                      onClick={() => setSelectedRoleMatrix(r)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold ${
-                        selectedRoleMatrix === r ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'
-                      }`}
-                    >
-                      {r}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {ALL_PERMISSIONS.map((perm) => {
-                  const enabled = currentRolePerms.includes(perm);
-                  return (
-                    <button
-                      key={perm}
-                      type="button"
-                      onClick={async () => {
-                        const updated = enabled
-                          ? currentRolePerms.filter((p) => p !== perm)
-                          : [...currentRolePerms, perm];
-                        await fetch('/api/settings', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ action: 'updateRolePermissions', role: selectedRoleMatrix, permissions: updated }),
-                        });
-                        await onRefresh();
-                      }}
-                      className={`flex items-center justify-between px-2.5 py-2 rounded-xl border text-[11px] font-mono ${
-                        enabled
-                          ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-500 font-bold'
-                          : 'bg-slate-50 dark:bg-charcoal-950 border-slate-200 dark:border-charcoal-800 text-slate-400'
-                      }`}
-                    >
-                      <span className="truncate">{perm}</span>
-                      {enabled && <Check className="w-3.5 h-3.5 shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* ADD / EDIT EMPLOYEE MODAL */}
+      {/* SIMPLE ADD / EDIT EMPLOYEE MODAL (ONLY ESSENTIAL FIELDS!) */}
       {showEmpModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
-          <form onSubmit={handleSaveEmployee} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
-            <h3 className="text-lg font-black">
-              {editingEmpId ? t.employees.editEmployee : t.employees.addEmployee}
-            </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 overflow-y-auto">
+          <form onSubmit={handleSaveEmployee} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 my-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black">
+                {editingEmpId ? t.employees.editEmployee : t.employees.addEmployee}
+              </h3>
+              <button type="button" onClick={() => setShowEmpModal(false)} className="p-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-slate-400">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
             <div>
               <label className="block text-xs font-bold mb-1">{t.employees.name} *</label>
-              <input type="text" required value={empName} onChange={(e) => setEmpName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-semibold" />
+              <input type="text" required value={empName} onChange={(e) => setEmpName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold" />
             </div>
+
             <div>
               <label className="block text-xs font-bold mb-1">{t.employees.phone} *</label>
               <input type="text" required value={empPhone} onChange={(e) => setEmpPhone(e.target.value)} placeholder="0750XXXXXXX" className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-mono" />
             </div>
+
             <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold mb-1">{t.employees.monthlySalary} *</label>
+                <input type="number" min="0" step="any" required value={empSalary} onChange={(e) => setEmpSalary(e.target.value)} placeholder="600000" className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-black text-emerald-500" />
+              </div>
               <div>
                 <label className="block text-xs font-bold mb-1">{t.employees.position}</label>
-                <input type="text" value={empPosition} onChange={(e) => setEmpPosition(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold mb-1">{t.employees.monthlySalary}</label>
-                <input type="number" min="0" step="any" value={empSalary} onChange={(e) => setEmpSalary(e.target.value)} placeholder="750000" className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-sm font-bold text-emerald-500" />
+                <input type="text" value={empPosition} onChange={(e) => setEmpPosition(e.target.value)} placeholder={lang === 'ku' ? 'نموونە: شێف، شۆفێر...' : 'e.g. Chef, Driver...'} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold mb-1">{t.employees.startDate}</label>
-                <CustomDatePicker value={empStartDate} onChange={setEmpStartDate} lang={lang} />
-              </div>
+
+            {editingEmpId && (
               <div>
                 <label className="block text-xs font-bold mb-1">{t.status}</label>
                 <select value={empStatus} onChange={(e) => setEmpStatus(e.target.value as any)} className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs font-bold">
@@ -892,10 +787,11 @@ export function EmployeesPayrollView({
                   <option value="INACTIVE">{t.statuses.INACTIVE}</option>
                 </select>
               </div>
-            </div>
+            )}
+
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setShowEmpModal(false)} className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-sm font-semibold">{t.cancel}</button>
-              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-black">{t.save}</button>
+              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-black">{submitting ? t.saving : t.save}</button>
             </div>
           </form>
         </div>
@@ -903,20 +799,25 @@ export function EmployeesPayrollView({
 
       {/* QUICK PAY SALARY MODAL */}
       {payTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 overflow-y-auto">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               handlePaySalary(false);
             }}
-            className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl"
+            className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 my-6 shadow-2xl"
           >
-            <h3 className="text-lg font-black flex items-center gap-2 text-teal-500">
-              <Banknote className="w-5 h-5" />
-              {t.employees.paySalary}
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black flex items-center gap-2 text-teal-500">
+                <Banknote className="w-5 h-5" />
+                {t.employees.paySalary}
+              </h3>
+              <button type="button" onClick={() => setPayTarget(null)} className="p-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-slate-400">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
 
-            <div className="p-4 rounded-xl bg-teal-500/10 border border-teal-500/25 space-y-1 text-xs">
+            <div className="p-4 rounded-xl bg-teal-500/10 border border-teal-500/25 space-y-1.5 text-xs">
               <div className="text-base font-black text-slate-900 dark:text-white">{payTarget.name}</div>
               <div className="font-mono text-slate-500">{payTarget.phone} • {selectedMonth}</div>
               {Number(payTarget.monthlySalaryIqd) > 0 && (
@@ -957,12 +858,12 @@ export function EmployeesPayrollView({
                     payType === pt ? 'bg-teal-600 text-white' : 'bg-slate-100 dark:bg-charcoal-800'
                   }`}
                 >
-                  {pt === 'FULL' ? t.expenses.fullPayment : pt === 'PARTIAL' ? t.expenses.partialPayment : t.expenses.advancePayment}
+                  {payTypeLabel(pt)}
                 </button>
               ))}
             </div>
 
-            {/* Inline Off Days + Optional Deduction inside Pay Salary Modal */}
+            {/* Inline Off Days + Optional Deduction */}
             <div className={`p-3 rounded-xl border space-y-2.5 ${
               Number(payOffDays || 0) > 0 && payHasDeduction
                 ? 'bg-rose-500/10 border-rose-500/40'
@@ -1085,7 +986,7 @@ export function EmployeesPayrollView({
 
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setPayTarget(null)} className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-sm font-semibold">{t.cancel}</button>
-              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-black">{t.save}</button>
+              <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-black">{submitting ? t.saving : t.save}</button>
             </div>
           </form>
         </div>
@@ -1093,17 +994,21 @@ export function EmployeesPayrollView({
 
       {/* RECORD OFF DAYS & OPTIONAL SALARY DEDUCTION MODAL */}
       {offTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 overflow-y-auto">
           <form
             onSubmit={handleSaveOffDays}
-            className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl"
+            className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-4 my-6 shadow-2xl"
           >
-            <h3 className="text-lg font-black flex items-center gap-2 text-amber-500">
-              <CalendarOff className="w-5 h-5" />
-              {lang === 'ku' ? 'تۆمارکردنی مۆڵەت و ڕۆژی نەهاتن' : lang === 'ar' ? 'تسجيل إجازة / أيام الغياب' : 'Record Employee Off Days'}
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black flex items-center gap-2 text-amber-500">
+                <CalendarOff className="w-5 h-5" />
+                {lang === 'ku' ? 'تۆمارکردنی مۆڵەت و ڕۆژی نەهاتن' : lang === 'ar' ? 'تسجيل إجازة / أيام الغياب' : 'Record Employee Off Days'}
+              </h3>
+              <button type="button" onClick={() => setOffTarget(null)} className="p-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-slate-400">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
 
-            {/* Employee Salary Summary */}
             <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-1 text-xs">
               <div className="text-base font-black text-slate-900 dark:text-white">{offTarget.name}</div>
               <div className="flex justify-between text-slate-500 pt-1">
@@ -1122,7 +1027,6 @@ export function EmployeesPayrollView({
               )}
             </div>
 
-            {/* Days Count & Date */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold mb-1.5">
@@ -1178,7 +1082,6 @@ export function EmployeesPayrollView({
               </div>
             </div>
 
-            {/* OPTIONAL SALARY DEDUCTION TOGGLE BOX */}
             <div className={`p-4 rounded-2xl border transition space-y-3 ${
               offHasDeduction
                 ? 'bg-rose-500/10 border-rose-500/40'
@@ -1267,51 +1170,6 @@ export function EmployeesPayrollView({
               <button type="submit" disabled={submitting} className="px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-black shadow-lg shadow-amber-600/20">
                 {submitting ? t.saving : t.save}
               </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* NEW SYSTEM USER MODAL (ADMIN) */}
-      {showNewUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setSubmitting(true);
-              try {
-                const res = await fetch('/api/settings', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'createUser', name: uName, username: uUsername, email: uEmail, role: uRole }),
-                });
-                if (res.ok) {
-                  setShowNewUser(false);
-                  setUName('');
-                  setUUsername('');
-                  setUEmail('');
-                  await onRefresh();
-                }
-              } finally {
-                setSubmitting(false);
-              }
-            }}
-            className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-md w-full space-y-3"
-          >
-            <h3 className="text-base font-bold">Add System Login User</h3>
-            <input type="text" required placeholder="Full Name" value={uName} onChange={(e) => setUName(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
-            <input type="text" required placeholder="Username" value={uUsername} onChange={(e) => setUUsername(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
-            <input type="email" required placeholder="Email" value={uEmail} onChange={(e) => setUEmail(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs" />
-            <select value={uRole} onChange={(e) => setURole(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs">
-              <option value="BUSINESS_OWNER">BUSINESS_OWNER</option>
-              <option value="ACCOUNTANT">ACCOUNTANT</option>
-              <option value="SALES_EMPLOYEE">SALES_EMPLOYEE</option>
-              <option value="INVENTORY_MANAGER">INVENTORY_MANAGER</option>
-              <option value="VIEWER">VIEWER</option>
-            </select>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowNewUser(false)} className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs">{t.cancel}</button>
-              <button type="submit" disabled={submitting} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">{t.save}</button>
             </div>
           </form>
         </div>
