@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Sparkles,
   Wrench,
+  XCircle,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import {
@@ -57,14 +58,22 @@ export function ProductionModuleView({
   const recipes = productionData?.recipes || [];
   const batches = productionData?.batches || [];
 
-  const finishedProducts = useMemo(
-    () => products.filter((p) => p.productType !== 'RAW_MATERIAL'),
-    [products]
-  );
-  const rawMaterials = useMemo(
-    () => products.filter((p) => p.productType === 'RAW_MATERIAL' || p.productType === 'GENERAL'),
-    [products]
-  );
+  const finishedProducts = useMemo(() => {
+    const score = (p: any) => {
+      const sku = String(p.sku || '');
+      if (sku.startsWith('FOOD-')) return 0;
+      if (p.productType === 'FINISHED_PRODUCT' && !sku.startsWith('SKU-10')) return 1;
+      return 2;
+    };
+    return products
+      .filter((p) => p.productType === 'FINISHED_PRODUCT' || (p.productType !== 'RAW_MATERIAL' && !String(p.sku || '').startsWith('SKU-10')))
+      .sort((a, b) => score(a) - score(b));
+  }, [products]);
+
+  const rawMaterials = useMemo(() => {
+    const list = products.filter((p) => p.productType === 'RAW_MATERIAL');
+    return list.length > 0 ? list : products.filter((p) => !String(p.sku || '').startsWith('SKU-10'));
+  }, [products]);
 
   // Record Production Modal State
   const [mode, setMode] = useState<'RECIPE' | 'MANUAL'>('RECIPE');
@@ -171,6 +180,19 @@ export function ProductionModuleView({
     return Math.round(total);
   }, [batchMaterials, products, units]);
 
+  const estimatedRecipeCost = useMemo(() => {
+    let total = 0;
+    for (const ing of recipeIngredients) {
+      const rm = products.find((p) => p.id === ing.rawMaterialId);
+      if (!rm || !Number(ing.quantity)) continue;
+      try {
+        const baseQty = convertQuantity(Number(ing.quantity), ing.unit, rm.unit, units);
+        total += baseQty * Number(rm.purchaseCostIqd || 0);
+      } catch {}
+    }
+    return Math.round(total);
+  }, [recipeIngredients, products, units]);
+
   const handleRecordProduction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!finishedProductId || Number(qtyProduced) <= 0) return;
@@ -207,6 +229,8 @@ export function ProductionModuleView({
         setModal(null);
         await onRefresh();
       }
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
@@ -242,6 +266,29 @@ export function ProductionModuleView({
         setModal(null);
         await onRefresh();
       }
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteRecipe = async (r: any) => {
+    const name = r.finishedProduct ? locName(r.finishedProduct, lang) : '';
+    if (!window.confirm(`${t.delete} ${name}?`)) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/production', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deleteRecipe', recipeId: r.id }),
+      });
+      if (res.ok) {
+        notify('success', `${name} ✓`);
+        await onRefresh();
+      } else notify('error', (await res.json()).error || 'Could not delete recipe');
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
@@ -258,9 +305,11 @@ export function ProductionModuleView({
       });
       const data = await res.json();
       if (res.ok) {
-        notify('success', `${batch.batchNumber} reversed`);
+        notify('success', `${batch.batchNumber} ✓`);
         await onRefresh();
       } else notify('error', data.error || 'Could not reverse batch');
+    } catch (err: any) {
+      notify('error', err?.message || 'Network error');
     } finally {
       setSubmitting(false);
     }
@@ -345,8 +394,12 @@ export function ProductionModuleView({
                         {b.batchNumber}
                         <div className="text-[10px] text-slate-400">{b.mode}</div>
                       </td>
-                      <td className="py-3 px-4 text-xs text-slate-500">{new Date(b.date).toLocaleDateString()}</td>
-                      <td className="py-3 px-4 font-bold">{locName(b.finishedProduct, lang)}</td>
+                      <td className="py-3 px-4 text-xs text-slate-500">
+                        {b.date ? new Date(b.date).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="py-3 px-4 font-bold">
+                        {b.finishedProduct ? locName(b.finishedProduct, lang) : '—'}
+                      </td>
                       <td className="py-3 px-4 text-center">
                         <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-500 font-black text-xs">
                           +{fmtQty(b.quantityProduced)} {unitLabel(b.unit, lang, units)}
@@ -356,7 +409,7 @@ export function ProductionModuleView({
                         {(b.materialsUsed || []).length === 0
                           ? '—'
                           : (b.materialsUsed || [])
-                              .map((m: any) => `${locName(m.rawMaterial, lang) || m.rawMaterialName}: ${fmtQty(m.quantity)} ${unitLabel(m.unit, lang, units)}`)
+                              .map((m: any) => `${(m.rawMaterial ? locName(m.rawMaterial, lang) : '') || m.rawMaterialName || '—'}: ${fmtQty(m.quantity)} ${unitLabel(m.unit, lang, units)}`)
                               .join(' • ')}
                       </td>
                       <td className="py-3 px-4 text-end font-bold">
@@ -400,25 +453,35 @@ export function ProductionModuleView({
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="font-black text-base text-slate-900 dark:text-white">
-                          {locName(r.finishedProduct, lang)}
+                          {r.finishedProduct ? locName(r.finishedProduct, lang) : '—'}
                         </div>
                         <div className="text-xs text-emerald-500 font-bold mt-0.5">
                           {t.production.yieldQty}: {fmtQty(r.yieldQuantity)} {unitLabel(r.yieldUnit, lang, units)}
                         </div>
                       </div>
-                      <button
-                        onClick={() => openRecipeModal(r)}
-                        className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-charcoal-800 text-xs font-bold"
-                      >
-                        {t.edit}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => openRecipeModal(r)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-charcoal-800 text-xs font-bold"
+                        >
+                          {t.edit}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteRecipe(r)}
+                          disabled={submitting}
+                          title={t.delete}
+                          className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-500"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="mt-3 space-y-1.5 border-t border-slate-200 dark:border-charcoal-800 pt-3">
                       {(r.ingredients || []).map((ing: any, idx: number) => (
                         <div key={idx} className="flex justify-between text-xs">
                           <span className="font-semibold text-slate-700 dark:text-slate-300">
-                            {locName(ing.rawMaterial, lang)}
+                            {ing.rawMaterial ? locName(ing.rawMaterial, lang) : '—'}
                           </span>
                           <span className="font-mono font-bold text-slate-500">
                             {fmtQty(ing.quantity)} {unitLabel(ing.unit, lang, units)}
@@ -454,10 +517,15 @@ export function ProductionModuleView({
             onSubmit={handleRecordProduction}
             className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-xl w-full space-y-4 my-8 shadow-2xl"
           >
-            <h3 className="text-lg font-black flex items-center gap-2">
-              <ChefHat className="w-5 h-5 text-emerald-500" />
-              {t.production.recordBatch}
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black flex items-center gap-2">
+                <ChefHat className="w-5 h-5 text-emerald-500" />
+                {t.production.recordBatch}
+              </h3>
+              <button type="button" onClick={() => setModal(null)} className="p-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-slate-400">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
 
             {/* Mode Switcher: Recipe vs Simple Manual */}
             <div className="grid grid-cols-2 gap-2">
@@ -500,9 +568,18 @@ export function ProductionModuleView({
                 onChange={(id) => {
                   setFinishedProductId(id);
                   const fp = products.find((p) => p.id === id);
-                  const u = fp?.unit || 'piece';
+                  const r = recipes.find((x: any) => x.finishedProductId === id);
+                  const u = r?.yieldUnit || fp?.unit || 'piece';
+                  const nextQty = r ? String(r.yieldQuantity) : qtyProduced;
+                  const nextMode: 'RECIPE' | 'MANUAL' = r ? 'RECIPE' : 'MANUAL';
                   setProdUnit(u);
-                  syncRecipeMaterials(id, qtyProduced, u, mode);
+                  setQtyProduced(nextQty);
+                  setMode(nextMode);
+                  if (nextMode === 'RECIPE') {
+                    syncRecipeMaterials(id, nextQty, u, 'RECIPE');
+                  } else {
+                    setBatchMaterials([]);
+                  }
                 }}
                 options={finishedProducts.map((p) => ({
                   value: p.id,
@@ -698,7 +775,12 @@ export function ProductionModuleView({
       {modal === 'RECIPE' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 overflow-y-auto">
           <form onSubmit={handleSaveRecipe} className="bg-white dark:bg-charcoal-900 border border-slate-200 dark:border-charcoal-800 rounded-2xl p-6 max-w-xl w-full space-y-4 my-8 shadow-2xl">
-            <h3 className="text-lg font-black">{t.production.addRecipe}</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black">{t.production.addRecipe}</h3>
+              <button type="button" onClick={() => setModal(null)} className="p-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-slate-400">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
             <div>
               <label className="block text-xs font-bold mb-1">{t.production.finishedProduct} *</label>
               <SearchableSelect
@@ -801,6 +883,16 @@ export function ProductionModuleView({
                   </div>
                 );
               })}
+              {estimatedRecipeCost > 0 && Number(recipeYieldQty) > 0 && (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 flex flex-wrap justify-between gap-2 text-xs font-bold mt-2">
+                  <span>
+                    {t.production.estimatedCost}: <b className="text-emerald-500">{fmtIqd(estimatedRecipeCost, lang)}</b>
+                  </span>
+                  <span>
+                    {t.production.unitCost}: <b className="text-teal-500">{fmtIqd(Math.round(estimatedRecipeCost / Number(recipeYieldQty)), lang)}</b>
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
