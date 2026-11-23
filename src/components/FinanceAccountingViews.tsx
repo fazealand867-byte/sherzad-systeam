@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   XCircle,
   Wallet,
+  Search,
 } from 'lucide-react';
 import { LanguageCode, translations } from '@/lib/i18n';
 import { exportToCsv, fmtIqd, locName } from '@/lib/client-utils';
@@ -40,6 +41,8 @@ export function CashBankModuleView({
   const transactions = cashBankData?.transactions || [];
   const [modal, setModal] = useState<null | 'DEPOSIT' | 'WITHDRAWAL' | 'TRANSFER' | 'RECONCILE' | 'NEW_ACCOUNT'>(null);
   const [selectedAccFilter, setSelectedAccFilter] = useState<string>('ALL');
+  const [dirFilter, setDirFilter] = useState<'ALL' | 'IN' | 'OUT'>('ALL');
+  const [txSearch, setTxSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const [primaryAccId, setPrimaryAccId] = useState(accounts[0]?.id || '');
@@ -67,9 +70,18 @@ export function CashBankModuleView({
   );
 
   const filteredTransactions = useMemo(() => {
-    if (selectedAccFilter === 'ALL') return transactions;
-    return transactions.filter((tx: any) => tx.financialAccountId === selectedAccFilter);
-  }, [transactions, selectedAccFilter]);
+    const q = txSearch.trim().toLowerCase();
+    return transactions.filter((tx: any) => {
+      if (selectedAccFilter !== 'ALL' && tx.financialAccountId !== selectedAccFilter) return false;
+      if (dirFilter !== 'ALL' && tx.direction !== dirFilter) return false;
+      if (!q) return true;
+      return (
+        (tx.transactionNumber || '').toLowerCase().includes(q) ||
+        (tx.description || '').toLowerCase().includes(q) ||
+        (tx.financialAccount ? locName(tx.financialAccount, lang) : '').toLowerCase().includes(q)
+      );
+    });
+  }, [transactions, selectedAccFilter, dirFilter, txSearch, lang]);
 
   const openModal = (m: NonNullable<typeof modal>) => {
     setPrimaryAccId(accounts[0]?.id || '');
@@ -202,12 +214,16 @@ export function CashBankModuleView({
               }`}
             >
               <div className="flex items-center justify-between text-[11px]">
-                <span className="font-mono text-slate-400">{acc.code}</span>
-                <span className={`px-2 py-0.5 rounded font-bold ${acc.type === 'BANK_ACCOUNT' ? 'bg-teal-500/15 text-teal-400' : 'bg-emerald-500/15 text-emerald-500'}`}>
+                <span className={`px-2.5 py-0.5 rounded-full font-bold ${acc.type === 'BANK_ACCOUNT' ? 'bg-teal-500/15 text-teal-400' : 'bg-emerald-500/15 text-emerald-500'}`}>
                   {acc.type === 'BANK_ACCOUNT'
                     ? (lang === 'ku' ? 'بانک' : lang === 'ar' ? 'بنك' : 'Bank')
                     : (lang === 'ku' ? 'قاسە' : lang === 'ar' ? 'صندوق' : 'Safe')}
                 </span>
+                {isSelected && (
+                  <span className="text-[11px] font-bold text-emerald-500">
+                    {lang === 'ku' ? '✓ هەڵبژێردراو' : lang === 'ar' ? '✓ محدد' : '✓ Selected'}
+                  </span>
+                )}
               </div>
               <div className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
                 <Wallet className="w-4 h-4 text-emerald-500 shrink-0" />
@@ -223,37 +239,72 @@ export function CashBankModuleView({
 
       <div className="bg-white dark:bg-charcoal-900 rounded-2xl border border-slate-200 dark:border-charcoal-800 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-200 dark:border-charcoal-800 flex flex-wrap justify-between items-center gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-black">{t.dashboard.recentActivity} ({filteredTransactions.length})</h3>
+            <div className="flex items-center gap-1">
+              {(['ALL', 'IN', 'OUT'] as const).map((df) => (
+                <button
+                  key={df}
+                  onClick={() => setDirFilter(df)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                    dirFilter === df
+                      ? df === 'IN'
+                        ? 'bg-emerald-600 text-white'
+                        : df === 'OUT'
+                        ? 'bg-rose-600 text-white'
+                        : 'bg-charcoal-900 dark:bg-slate-700 text-white'
+                      : 'bg-slate-100 dark:bg-charcoal-800 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  {df === 'ALL'
+                    ? t.all
+                    : df === 'IN'
+                    ? (lang === 'ku' ? 'هاتوو (+)' : lang === 'ar' ? 'وارد (+)' : 'In (+)')
+                    : (lang === 'ku' ? 'ڕۆیشتوو (-)' : lang === 'ar' ? 'صادر (-)' : 'Out (-)')}
+                </button>
+              ))}
+            </div>
             {selectedAccFilter !== 'ALL' && (
               <button
                 onClick={() => setSelectedAccFilter('ALL')}
-                className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-500 text-xs font-bold"
+                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 text-emerald-500 text-xs font-bold"
               >
-                {lang === 'ku' ? 'پیشاندانی هەموو ↺' : lang === 'ar' ? 'عرض الكل ↺' : 'Show All ↺'}
+                {lang === 'ku' ? 'پیشاندانی هەموو هەژمارەکان ↺' : lang === 'ar' ? 'عرض كل الحسابات ↺' : 'All Accounts ↺'}
               </button>
             )}
           </div>
-          <button
-            onClick={() =>
-              exportToCsv(
-                'cash-bank-iqd',
-                ['Tx #', 'Date', 'Account', 'Type', 'Direction', 'Amount IQD', 'Description'],
-                filteredTransactions.map((tx: any) => [
-                  tx.transactionNumber,
-                  tx.date ? new Date(tx.date).toISOString().slice(0, 10) : '',
-                  tx.financialAccount ? locName(tx.financialAccount, lang) : '',
-                  tx.type,
-                  tx.direction,
-                  tx.amountIqd,
-                  tx.description,
-                ])
-              )
-            }
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold"
-          >
-            <Download className="w-3.5 h-3.5" /> Excel
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-52 sm:w-60">
+              <Search className="w-4 h-4 text-slate-400 absolute top-2.5 start-3" />
+              <input
+                type="text"
+                value={txSearch}
+                onChange={(e) => setTxSearch(e.target.value)}
+                placeholder={t.searchPlaceholder}
+                className="w-full ps-9 pe-3 py-2 rounded-xl bg-slate-50 dark:bg-charcoal-950 border border-slate-200 dark:border-charcoal-800 text-xs"
+              />
+            </div>
+            <button
+              onClick={() =>
+                exportToCsv(
+                  'cash-bank-iqd',
+                  ['Tx #', 'Date', 'Account', 'Type', 'Direction', 'Amount IQD', 'Description'],
+                  filteredTransactions.map((tx: any) => [
+                    tx.transactionNumber,
+                    tx.date ? new Date(tx.date).toISOString().slice(0, 10) : '',
+                    tx.financialAccount ? locName(tx.financialAccount, lang) : '',
+                    tx.type,
+                    tx.direction,
+                    tx.amountIqd,
+                    tx.description,
+                  ])
+                )
+              }
+              className="flex items-center gap-1 px-3 py-2 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold"
+            >
+              <Download className="w-3.5 h-3.5" /> Excel
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -279,8 +330,17 @@ export function CashBankModuleView({
                     <td className="py-2.5 px-4 text-slate-500">{tx.date ? new Date(tx.date).toLocaleDateString() : '—'}</td>
                     <td className="py-2.5 px-4 font-semibold">{tx.financialAccount ? locName(tx.financialAccount, lang) : '—'}</td>
                     <td className="py-2.5 px-4 text-slate-500">{tx.description}</td>
-                    <td className={`py-2.5 px-4 text-end font-black ${tx.direction === 'IN' ? 'text-emerald-500' : 'text-rose-500'}`}>
-                      {tx.direction === 'IN' ? '+' : '-'}{fmtIqd(tx.amountIqd, lang)}
+                    <td className="py-2.5 px-4 text-end">
+                      <span
+                        dir="ltr"
+                        className={`inline-block px-2.5 py-0.5 rounded-full font-black ${
+                          tx.direction === 'IN'
+                            ? 'bg-emerald-500/15 text-emerald-500'
+                            : 'bg-rose-500/15 text-rose-500'
+                        }`}
+                      >
+                        {tx.direction === 'IN' ? '+' : '-'}{fmtIqd(tx.amountIqd, lang)}
+                      </span>
                     </td>
                     <td className="py-2.5 px-4 text-end font-bold">{fmtIqd(tx.balanceAfterIqd, lang)}</td>
                   </tr>
