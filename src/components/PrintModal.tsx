@@ -34,7 +34,19 @@ export function PrintModal({
     else setPrintFormat('A4');
   }, [doc]);
 
+  useEffect(() => {
+    if (!doc) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [doc, onClose]);
+
   if (!doc) return null;
+
+  const fmtDate = (val: any) => (val ? new Date(val).toLocaleDateString() : '—');
+  const fmtDateTime = (val: any) => (val ? new Date(val).toLocaleString() : '—');
 
   const companyName =
     lang === 'ku'
@@ -93,12 +105,22 @@ export function PrintModal({
     receiverSig: lang === 'ku' ? 'واژووی وەرگر' : lang === 'ar' ? 'توقيع المستلم' : 'Recipient Signature',
     statementTitle: lang === 'ku' ? 'کەشف حسابی فەرمی' : lang === 'ar' ? 'كشف حساب رسمي' : 'OFFICIAL ACCOUNT STATEMENT',
     closingBalance: lang === 'ku' ? 'باڵانسی کۆتایی' : lang === 'ar' ? 'الرصيد الختامي' : 'Closing Balance',
+    debit: lang === 'ku' ? 'مەدین (قەرز)' : lang === 'ar' ? 'مدين' : 'Debit',
+    credit: lang === 'ku' ? 'دائن (پارەدان)' : lang === 'ar' ? 'دائن' : 'Credit',
   };
 
   const payTypeLabel = (pt: string) => {
     if (pt === 'ADVANCE') return lang === 'ku' ? 'پێشەکی مووچە' : lang === 'ar' ? 'سلفة راتب' : 'Salary Advance';
     if (pt === 'PARTIAL') return lang === 'ku' ? 'بەشێک لە مووچە' : lang === 'ar' ? 'دفعة جزئية' : 'Partial Salary';
     return lang === 'ku' ? 'مووچەی تەواو' : lang === 'ar' ? 'راتب كامل' : 'Full Salary';
+  };
+
+  const invoicePayMethodLabel = (pm: string) => {
+    if (pm === 'CASH') return lang === 'ku' ? 'نەقد (کاش)' : lang === 'ar' ? 'نقداً' : 'Cash';
+    if (pm === 'CREDIT') return lang === 'ku' ? 'قەرز' : lang === 'ar' ? 'آجل (دين)' : 'Credit';
+    if (pm === 'PARTIAL') return lang === 'ku' ? 'بەشێکی دراو' : lang === 'ar' ? 'دفع جزئي' : 'Partial';
+    if (pm === 'BANK_TRANSFER') return lang === 'ku' ? 'بانک / حەواڵە' : lang === 'ar' ? 'تحويل بنكي' : 'Bank Transfer';
+    return pm || '—';
   };
 
   return (
@@ -165,19 +187,19 @@ export function PrintModal({
               <div className="max-w-xs mx-auto border border-dashed border-slate-400 p-5 text-xs text-slate-900 space-y-3">
                 <div className="text-center border-b border-dashed border-slate-300 pb-3">
                   <div className="font-black text-base">{companyName}</div>
-                  <div className="text-[11px] text-slate-600 mt-0.5">{settings?.phone}</div>
+                  {settings?.phone && <div dir="ltr" className="text-[11px] font-mono text-slate-600 mt-0.5">{settings.phone}</div>}
                   <div className="mt-2 inline-block px-3 py-1 rounded bg-slate-900 text-white font-bold">
                     {L.salaryReceiptTitle}
                   </div>
                 </div>
                 <div className="space-y-1.5 border-b border-dashed border-slate-300 pb-3">
                   <div className="flex justify-between"><span>{L.receiptNo}:</span><b className="font-mono">{d.receiptNumber}</b></div>
-                  <div className="flex justify-between"><span>{L.date}:</span><span>{new Date(d.date).toLocaleDateString()}</span></div>
+                  <div className="flex justify-between"><span>{L.date}:</span><span>{fmtDate(d.date)}</span></div>
                   <div className="flex justify-between"><span>{L.salaryMonth}:</span><b className="font-mono">{d.salaryMonth}</b></div>
                 </div>
                 <div className="space-y-1.5 border-b border-dashed border-slate-300 pb-3">
                   <div className="flex justify-between"><span>{L.employee}:</span><b>{d.employeeName}</b></div>
-                  {d.employeePhone && <div className="flex justify-between"><span>{L.phone}:</span><span className="font-mono">{d.employeePhone}</span></div>}
+                  {d.employeePhone && <div className="flex justify-between"><span>{L.phone}:</span><span dir="ltr" className="font-mono">{d.employeePhone}</span></div>}
                   {d.employeePosition && <div className="flex justify-between"><span>{L.position}:</span><span>{d.employeePosition}</span></div>}
                   <div className="flex justify-between"><span>{L.paymentType}:</span><b>{payTypeLabel(d.paymentType)}</b></div>
                 </div>
@@ -208,7 +230,7 @@ export function PrintModal({
                   <div>
                     <h1 className="text-2xl font-black text-slate-900">{companyName}</h1>
                     <p className="text-xs text-slate-500 mt-1">{companyAddress}</p>
-                    <p className="text-xs text-slate-500">{settings?.phone}</p>
+                    {settings?.phone && <p dir="ltr" className="text-xs font-mono text-slate-500 inline-block">{settings.phone}</p>}
                   </div>
                   <div className="text-end">
                     <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-black text-sm">
@@ -217,7 +239,7 @@ export function PrintModal({
                     </div>
                     <div className="mt-2 text-lg font-mono font-black text-slate-900">{d.receiptNumber}</div>
                     <div className="text-xs text-slate-500">
-                      {L.date}: {new Date(d.date).toLocaleDateString()}
+                      {L.date}: {fmtDate(d.date)}
                     </div>
                   </div>
                 </div>
@@ -226,7 +248,11 @@ export function PrintModal({
                   <div className="space-y-1.5">
                     <div className="text-xs text-slate-400 font-bold">{L.employee}</div>
                     <div className="text-lg font-black text-slate-900">{d.employeeName}</div>
-                    {d.employeePhone && <div className="text-slate-600 font-mono">{L.phone}: {d.employeePhone}</div>}
+                    {d.employeePhone && (
+                      <div className="text-slate-600">
+                        {L.phone}: <span dir="ltr" className="font-mono inline-block">{d.employeePhone}</span>
+                      </div>
+                    )}
                     {d.employeePosition && <div className="text-slate-600">{L.position}: {d.employeePosition}</div>}
                   </div>
                   <div className="space-y-1.5 text-end">
@@ -279,7 +305,7 @@ export function PrintModal({
               <div className="text-center border-b border-dashed border-slate-300 pb-3 mb-3">
                 <div className="font-black text-base">{companyName}</div>
                 <div className="text-[11px] text-slate-600 mt-1">{companyAddress}</div>
-                <div className="text-[11px] text-slate-600">{settings?.phone}</div>
+                {settings?.phone && <div dir="ltr" className="text-[11px] font-mono text-slate-600">{settings.phone}</div>}
               </div>
 
               <div className="space-y-1 border-b border-dashed border-slate-300 pb-3 mb-3">
@@ -289,7 +315,7 @@ export function PrintModal({
                 </div>
                 <div className="flex justify-between">
                   <span>{L.date}:</span>
-                  <span>{new Date(d.date).toLocaleString()}</span>
+                  <span>{fmtDateTime(d.date)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>{L.customer}:</span>
@@ -333,7 +359,7 @@ export function PrintModal({
                 {Number(d.discountIqd ?? d.discountOriginal) > 0 && (
                   <div className="flex justify-between text-emerald-700">
                     <span>{L.discount}:</span>
-                    <span>-{fmtIqd(d.discountIqd ?? d.discountOriginal, lang)}</span>
+                    <span dir="ltr">-{fmtIqd(d.discountIqd ?? d.discountOriginal, lang)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-sm font-black pt-1 border-t border-slate-200">
@@ -361,7 +387,7 @@ export function PrintModal({
                 <div>
                   <h1 className="text-2xl font-black text-slate-900">{companyName}</h1>
                   <p className="text-xs text-slate-500 mt-1">{companyAddress}</p>
-                  <p className="text-xs text-slate-600 mt-1">{settings?.phone}</p>
+                  {settings?.phone && <p dir="ltr" className="text-xs font-mono text-slate-600 mt-1 inline-block">{settings.phone}</p>}
                 </div>
 
                 <div className="text-end">
@@ -382,7 +408,7 @@ export function PrintModal({
                     {d.invoiceNumber}
                   </div>
                   <div className="text-xs text-slate-500">
-                    {L.date}: {new Date(d.date).toLocaleDateString()}
+                    {L.date}: {fmtDate(d.date)}
                   </div>
                 </div>
               </div>
@@ -395,12 +421,14 @@ export function PrintModal({
                   <div className="text-base font-black text-slate-900">
                     {d.customer?.name || d.supplier?.name}
                   </div>
-                  <div className="text-slate-600 font-mono">
-                    {d.customer?.phone || d.supplier?.phone}
-                  </div>
+                  {(d.customer?.phone || d.supplier?.phone) && (
+                    <div dir="ltr" className="text-slate-600 font-mono inline-block">
+                      {d.customer?.phone || d.supplier?.phone}
+                    </div>
+                  )}
                 </div>
                 <div className="text-end space-y-1">
-                  <div className="text-slate-500">{L.paymentType}: <b>{d.paymentType}</b></div>
+                  <div className="text-slate-500">{L.paymentType}: <b>{invoicePayMethodLabel(d.paymentType)}</b></div>
                   {d.supplierInvoiceRef && (
                     <div className="text-slate-500">Ref: <b>{d.supplierInvoiceRef}</b></div>
                   )}
@@ -454,13 +482,13 @@ export function PrintModal({
                   {Number(d.discountIqd ?? d.discountOriginal) > 0 && (
                     <div className="flex justify-between text-emerald-700 font-semibold">
                       <span>{L.discount}:</span>
-                      <span>-{fmtIqd(d.discountIqd ?? d.discountOriginal, lang)}</span>
+                      <span dir="ltr">-{fmtIqd(d.discountIqd ?? d.discountOriginal, lang)}</span>
                     </div>
                   )}
                   {Number(d.shippingIqd ?? d.shippingOriginal) > 0 && (
                     <div className="flex justify-between text-slate-600 font-semibold">
                       <span>{lang === 'ku' ? 'گواستنەوە' : lang === 'ar' ? 'الشحن والنقل' : 'Shipping'}:</span>
-                      <span>+{fmtIqd(d.shippingIqd ?? d.shippingOriginal, lang)}</span>
+                      <span dir="ltr">+{fmtIqd(d.shippingIqd ?? d.shippingOriginal, lang)}</span>
                     </div>
                   )}
                   <div className="flex justify-between text-base font-black text-slate-900 border-t border-slate-300 pt-2">
@@ -500,8 +528,14 @@ export function PrintModal({
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex justify-between items-center text-xs">
                 <div>
                   <div className="text-base font-black">{d.customer?.name || d.supplier?.name}</div>
-                  <div className="text-slate-600 font-mono">
-                    {d.customer?.code || d.supplier?.code} • {d.customer?.phone || d.supplier?.phone}
+                  <div className="text-slate-600 font-mono flex items-center gap-1.5 flex-wrap">
+                    <span>{d.customer?.code || d.supplier?.code}</span>
+                    {(d.customer?.phone || d.supplier?.phone) && (
+                      <>
+                        <span>•</span>
+                        <span dir="ltr">{d.customer?.phone || d.supplier?.phone}</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="text-end">
@@ -518,15 +552,15 @@ export function PrintModal({
                     <th className="py-2 px-3 text-start">{L.date}</th>
                     <th className="py-2 px-3 text-start">#</th>
                     <th className="py-2 px-3 text-start">{L.notes}</th>
-                    <th className="py-2 px-3 text-end">Debit</th>
-                    <th className="py-2 px-3 text-end">Credit</th>
+                    <th className="py-2 px-3 text-end">{L.debit}</th>
+                    <th className="py-2 px-3 text-end">{L.credit}</th>
                     <th className="py-2 px-3 text-end">{L.closingBalance}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 border border-slate-200">
                   {(d.lines || []).map((line: any, idx: number) => (
                     <tr key={idx}>
-                      <td className="py-2 px-3">{new Date(line.date).toLocaleDateString()}</td>
+                      <td className="py-2 px-3">{fmtDate(line.date)}</td>
                       <td className="py-2 px-3 font-mono font-semibold">{line.reference}</td>
                       <td className="py-2 px-3">{line.description}</td>
                       <td className="py-2 px-3 text-end">{fmtIqd(line.debitIqd, lang)}</td>

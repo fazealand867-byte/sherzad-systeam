@@ -776,7 +776,7 @@ export function SalesModuleView({
                     ['Invoice #', 'Date', 'Customer', 'Status', 'Total IQD', 'Paid IQD', 'Due IQD'],
                     filteredInvoices.map((i) => [
                       i.invoiceNumber,
-                      new Date(i.date).toISOString().slice(0, 10),
+                      i.date ? new Date(i.date).toISOString().slice(0, 10) : '',
                       i.customer?.name || '',
                       i.status,
                       i.totalIqd,
@@ -811,7 +811,7 @@ export function SalesModuleView({
                 {filteredInvoices.map((inv) => (
                   <tr key={inv.id} className="hover:bg-slate-50/70 dark:hover:bg-charcoal-800/40">
                     <td className="py-3 px-4 font-mono text-xs font-bold text-emerald-500">{inv.invoiceNumber}</td>
-                    <td className="py-3 px-4 text-xs text-slate-500">{new Date(inv.date).toLocaleDateString()}</td>
+                    <td className="py-3 px-4 text-xs text-slate-500">{inv.date ? new Date(inv.date).toLocaleDateString() : '—'}</td>
                     <td className="py-3 px-4 font-bold">{inv.customer?.name}</td>
                     <td className="py-3 px-4 text-center">
                       <span
@@ -1507,7 +1507,7 @@ export function PurchasesModuleView({
               exportToCsv(
                 'purchases-iqd',
                 ['Invoice #', 'Date', 'Supplier', 'Status', 'Total IQD', 'Paid IQD', 'Due IQD'],
-                filteredInvoices.map((i) => [i.invoiceNumber, new Date(i.date).toISOString().slice(0, 10), i.supplier?.name || '', i.status, i.totalIqd, i.paidIqd, i.dueIqd])
+                filteredInvoices.map((i) => [i.invoiceNumber, i.date ? new Date(i.date).toISOString().slice(0, 10) : '', i.supplier?.name || '', i.status, i.totalIqd, i.paidIqd, i.dueIqd])
               )
             }
             className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-charcoal-800 text-xs font-semibold flex items-center gap-1"
@@ -1534,7 +1534,7 @@ export function PurchasesModuleView({
               {filteredInvoices.map((inv) => (
                 <tr key={inv.id}>
                   <td className="py-3 px-4 font-mono text-xs font-bold text-teal-500">{inv.invoiceNumber}</td>
-                  <td className="py-3 px-4 text-xs text-slate-500">{new Date(inv.date).toLocaleDateString()}</td>
+                  <td className="py-3 px-4 text-xs text-slate-500">{inv.date ? new Date(inv.date).toLocaleDateString() : '—'}</td>
                   <td className="py-3 px-4 font-bold">{inv.supplier?.name}</td>
                   <td className="py-3 px-4 text-center">
                     <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${inv.status === 'PAID' ? 'bg-emerald-500/15 text-emerald-500' : inv.status === 'RETURNED' ? 'bg-rose-500/15 text-rose-500' : 'bg-amber-500/15 text-amber-500'}`}>

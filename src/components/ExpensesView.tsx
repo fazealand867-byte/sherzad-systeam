@@ -225,25 +225,8 @@ export function ExpensesModuleView({
 
     setSubmitting(true);
     try {
-      // If off days were entered during salary payment, record them first so remaining salary & off-days history stay 100% accurate
       const offDaysNum = Math.max(0, Number(salOffDays || 0));
       const dedNum = salHasDeduction && offDaysNum > 0 ? Math.max(0, Math.round(Number(salDeductionIqd || 0))) : 0;
-      if (isSalaryMode && offDaysNum > 0 && !confirmDuplicate) {
-        await fetch('/api/employees', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'recordOffDays',
-            employeeId: selectedEmployeeId,
-            salaryMonth,
-            date,
-            days: offDaysNum,
-            hasDeduction: salHasDeduction && dedNum > 0,
-            deductionIqd: dedNum,
-            reason: notes.trim() || undefined,
-          }),
-        });
-      }
 
       const payload: any = {
         action: 'createExpense',
@@ -271,6 +254,7 @@ export function ExpensesModuleView({
         payload.confirmDuplicate = confirmDuplicate;
       }
 
+      // Record salary/expense FIRST so a 409 duplicate prompt or validation error never double-creates off days!
       const res = await fetch('/api/expenses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -286,6 +270,25 @@ export function ExpensesModuleView({
       if (!res.ok) {
         notify('error', data.error || 'Failed to record expense');
       } else {
+        // Now that salary payment succeeded, record any inline off days cleanly
+        if (isSalaryMode && offDaysNum > 0) {
+          try {
+            await fetch('/api/employees', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'recordOffDays',
+                employeeId: selectedEmployeeId,
+                salaryMonth,
+                date,
+                days: offDaysNum,
+                hasDeduction: salHasDeduction && dedNum > 0,
+                deductionIqd: dedNum,
+                reason: notes.trim() || undefined,
+              }),
+            });
+          } catch {}
+        }
         setShowNew(false);
         setDuplicateWarning(null);
         if (data.salaryPayment) {
@@ -505,7 +508,7 @@ export function ExpensesModuleView({
                   ['Expense #', 'Date', 'Category', 'Details', 'Employee / Payee', 'Status', 'Amount (IQD)'],
                   filteredExpenses.map((e) => [
                     e.expenseNumber,
-                    new Date(e.date).toISOString().slice(0, 10),
+                    e.date ? new Date(e.date).toISOString().slice(0, 10) : '',
                     categoryLabel(e.category),
                     e.title,
                     e.employeeName || e.vendorName || '',
@@ -575,7 +578,7 @@ export function ExpensesModuleView({
                       {exp.expenseNumber}
                     </td>
                     <td className="py-3 px-4 text-xs text-slate-500">
-                      {new Date(exp.date).toLocaleDateString()}
+                      {exp.date ? new Date(exp.date).toLocaleDateString() : '—'}
                     </td>
                     <td className="py-3 px-4">
                       <span
